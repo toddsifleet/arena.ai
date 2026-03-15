@@ -60,8 +60,6 @@ class ConnectionManager:
         self._room_presence_subs: dict[str, set[Any]] = {}
         self._listeners: list[Listener] = []
 
-    # --- Listener registration ---
-
     def add_listener(self, cb: Listener) -> None:
         self._listeners.append(cb)
 
@@ -78,8 +76,6 @@ class ConnectionManager:
                 await cb(event)
             except Exception:
                 logger.exception("listener error for %s", type(event).__name__)
-
-    # --- Room lifecycle ---
 
     async def create_room(self) -> str:
         room_id = await self._store.create_room()
@@ -107,8 +103,6 @@ class ConnectionManager:
     async def list_peers(self, room_id: str) -> list[PeerInfo]:
         return await self._store.list_peers(room_id)
 
-    # --- Peer WebSocket binding ---
-
     async def register_peer_ws(self, peer_id: str, ws: Any) -> bool:
         """Bind a WebSocket to a peer. Returns True if the peer was reconnecting."""
         was_reconnecting = await self._store.mark_peer_connected(peer_id)
@@ -131,10 +125,8 @@ class ConnectionManager:
         return self._peer_to_ws.get(peer_id)
 
     async def get_all_peer_connections(self) -> list[tuple[str, Any]]:
-        """Snapshot of all (peer_id, ws) pairs with active connections."""
         return list(self._peer_to_ws.items())
 
-    # --- Peer queries ---
 
     async def peer_in_room(self, peer_id: str) -> str | None:
         return await self._store.get_peer_room(peer_id)
@@ -142,12 +134,8 @@ class ConnectionManager:
     async def get_other_peers_in_room(self, room_id: str, exclude_peer_id: str) -> list[str]:
         return await self._store.get_other_peers_in_room(room_id, exclude_peer_id)
 
-    # --- Heartbeat ---
-
     async def touch_heartbeat(self, peer_id: str) -> None:
         await self._store.touch_heartbeat(peer_id)
-
-    # --- Peer removal ---
 
     async def remove_peer_from_room(self, peer_id: str, cause: str = "left") -> str | None:
         """Fully remove a peer from its room. Returns room_id if the peer was in one."""
@@ -159,7 +147,19 @@ class ConnectionManager:
             await self._dispatch(RoomDestroyed(room_id=room_id))
         return room_id
 
-    # --- Room presence subscribers ---
+    async def subscribe_presence(self, room_id: str, ws: Any) -> None:
+        """Register ws as a presence subscriber and immediately flush the current snapshot."""
+        self._room_presence_subs.setdefault(room_id, set()).add(ws)
+        for peer in await self._store.list_peers(room_id):
+            if peer.peer_id in self._peer_to_ws:
+                await send_json(
+                    ws,
+                    PresenceMessage(
+                        payload=PresencePayload(
+                            kind="reconnected", peer_id=peer.peer_id, room_id=room_id
+                        )
+                    ),
+                )
 
     async def add_presence_sub(self, room_id: str, ws: Any) -> None:
         self._room_presence_subs.setdefault(room_id, set()).add(ws)
@@ -174,12 +174,9 @@ class ConnectionManager:
     async def get_presence_subs(self, room_id: str) -> list[Any]:
         return list(self._room_presence_subs.get(room_id, set()))
 
-    # --- Dashboard snapshot ---
-
     async def snapshot(self) -> dict:
         return await self._store.snapshot()
 
-    # --- Presence notifications ---
 
     async def notify_presence(
         self,
@@ -197,8 +194,6 @@ class ConnectionManager:
                 await send_json(ws, msg)
         for sub_ws in self._room_presence_subs.get(room_id, set()):
             await send_json(sub_ws, msg)
-
-    # --- Heartbeat loop and eviction ---
 
     async def _evict_stale_peers(self) -> None:
         for peer_id, ws in list(self._peer_to_ws.items()):
@@ -236,7 +231,6 @@ class ConnectionManager:
                 logger.info("Removed empty room %s past TTL", room_id)
 
     async def heartbeat_loop(self) -> None:
-        """Periodic eviction loop. Runs until cancelled."""
         while True:
             await asyncio.sleep(settings.heartbeat_interval_seconds)
             try:
@@ -247,7 +241,6 @@ class ConnectionManager:
                 logger.exception("heartbeat_loop error")
 
     async def close_all_peer_connections(self) -> None:
-        """Close every active WebSocket before shutdown."""
         for peer_id, ws in list(self._peer_to_ws.items()):
             try:
                 await ws.close()
@@ -257,7 +250,6 @@ class ConnectionManager:
         logger.info("Closed all peer connections")
 
     async def shutdown(self) -> None:
-        """Clear all WebSocket state, then delegate to the store."""
         self._peer_to_ws.clear()
         self._room_presence_subs.clear()
         await self._store.shutdown()

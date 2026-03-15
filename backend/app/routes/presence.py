@@ -10,9 +10,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from app.dependencies import get_registry
-from app.connection_manager import ConnectionManager, send_json
-from app.schemas import PresenceMessage, PresencePayload
+from app.dependencies import get_connection_manager
+from app.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +22,11 @@ router = APIRouter()
 async def presence_ws(
     room_id: UUID,
     websocket: WebSocket,
-    registry: ConnectionManager = Depends(get_registry),
+    connection_manager: ConnectionManager = Depends(get_connection_manager),
 ) -> None:
     room = str(room_id)
     await websocket.accept()
-    await registry.add_presence_sub(room, websocket)
-
-    # Send the current snapshot so the client doesn't need to poll for initial state.
-    for peer in await registry.list_peers(room):
-        if await registry.get_ws(peer.peer_id):
-            await send_json(
-                websocket,
-                PresenceMessage(
-                    payload=PresencePayload(kind="reconnected", peer_id=peer.peer_id, room_id=room)
-                ),
-            )
+    await connection_manager.subscribe_presence(room, websocket)
 
     try:
         while True:
@@ -47,4 +36,4 @@ async def presence_ws(
     except Exception:
         logger.exception("presence_ws error for room %s", room)
     finally:
-        await registry.remove_presence_sub(room, websocket)
+        await connection_manager.remove_presence_sub(room, websocket)

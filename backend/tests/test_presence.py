@@ -1,16 +1,19 @@
 """Tests for the room presence WebSocket endpoint (/rooms/{room_id}/presence)."""
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 
-def test_presence_ws_connects(client):
-    """A presence subscriber can connect and stays open without error."""
+def test_presence_ws_connects(client, test_connection_manager):
+    """A presence subscriber can connect, is tracked in the registry, and is removed on disconnect."""
     room_id = client.post("/rooms").json()["room_id"]
     with client.websocket_connect(f"/rooms/{room_id}/presence"):
-        pass  # Clean connect + disconnect is enough
+        assert room_id in test_connection_manager._room_presence_subs
+    assert test_connection_manager._room_presence_subs.get(room_id) is None
 
 
 def test_presence_ws_rejects_invalid_uuid_room_id(client):
-    with pytest.raises(Exception):
+    """A non-UUID room_id causes FastAPI to reject the WebSocket connection."""
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/rooms/not-a-uuid/presence"):
             pass
 
@@ -70,16 +73,18 @@ def test_presence_ws_receives_peer_left(client):
         assert msg["payload"]["kind"] == "left"
 
 
-def test_presence_ws_subscriber_removed_on_disconnect(client):
-    """After the presence WS closes, the registry removes it from subscribers."""
+def test_presence_ws_subscriber_removed_on_disconnect(client, test_connection_manager):
+    """After the presence WS closes, the connection manager removes it from subscribers."""
     room_id = client.post("/rooms").json()["room_id"]
     peer = client.get(f"/rooms/{room_id}/join").json()
 
     with client.websocket_connect(f"/rooms/{room_id}/presence"):
         pass  # connect and immediately disconnect
 
-    # Connect peer via signaling; if the dead subscriber were still registered
-    # it would cause a send error — the test just verifies no crash occurs.
+    # Directly verify the subscriber was removed, not just silently skipped
+    assert test_connection_manager._room_presence_subs.get(room_id) is None
+
+    # Also verify the server remains healthy and can still broadcast to a live peer
     with client.websocket_connect(f"/peerjs?id={peer['peer_id']}") as ws:
         assert ws.receive_json()["type"] == "OPEN"
 

@@ -5,13 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-# --- Domain value objects ---
-
-
 @dataclass(frozen=True, slots=True)
 class JoinResult:
-    """Returned by Registry.join_room on success."""
-
     room_id: str
     peer_id: str
     client_id: str
@@ -20,14 +15,9 @@ class JoinResult:
 
 @dataclass(frozen=True, slots=True)
 class PeerInfo:
-    """Snapshot of a peer's state within a room."""
-
     peer_id: str
     client_id: str
     connected: bool
-
-
-# --- Domain exceptions ---
 
 
 class RoomNotFound(Exception):
@@ -40,9 +30,6 @@ class RoomFull(Exception):
 
 class AlreadyConnected(Exception):
     pass
-
-
-# --- PeerJS-compatible signaling types ---
 
 
 class SignalingType(str, Enum):

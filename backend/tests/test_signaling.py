@@ -6,11 +6,6 @@ def _join(client, room_id):
     return client.get(f"/rooms/{room_id}/join").json()
 
 
-# ---------------------------------------------------------------------------
-# Connection setup
-# ---------------------------------------------------------------------------
-
-
 def test_open_message(client):
     room_id = client.post("/rooms").json()["room_id"]
     peer = _join(client, room_id)
@@ -41,11 +36,6 @@ def test_open_emits_ws_connected_event(client, test_event_log):
     assert "ws.connected" in types
 
 
-# ---------------------------------------------------------------------------
-# Heartbeat
-# ---------------------------------------------------------------------------
-
-
 def test_heartbeat_response(client):
     room_id = client.post("/rooms").json()["room_id"]
     peer = _join(client, room_id)
@@ -54,11 +44,6 @@ def test_heartbeat_response(client):
         ws.send_json({"type": "HEARTBEAT"})
         msg = ws.receive_json()
         assert msg["type"] == "HEARTBEAT"
-
-
-# ---------------------------------------------------------------------------
-# Presence notifications on connect / disconnect
-# ---------------------------------------------------------------------------
 
 
 def test_presence_on_join(client):
@@ -105,11 +90,6 @@ def test_disconnect_emits_ws_disconnected_event(client, test_event_log):
         ws.receive_json()  # OPEN
     types = [e.type for e in test_event_log.get_events()]
     assert "ws.disconnected" in types
-
-
-# ---------------------------------------------------------------------------
-# Signal forwarding: OFFER / ANSWER / CANDIDATE
-# ---------------------------------------------------------------------------
 
 
 def test_offer_forwarding(client):
@@ -200,11 +180,6 @@ def test_offer_emits_signal_event(client, test_event_log):
     assert "signal.offer" in types
 
 
-# ---------------------------------------------------------------------------
-# Drop / ignore edge cases
-# ---------------------------------------------------------------------------
-
-
 def test_ignores_offer_to_unknown_dst(client):
     """OFFER to a peer not in the room is silently dropped."""
     room_id = client.post("/rooms").json()["room_id"]
@@ -246,11 +221,6 @@ def test_ignores_invalid_json(client):
         ws_a.send_text("this is not json }{")
         ws_a.send_json({"type": "HEARTBEAT"})
         assert ws_a.receive_json()["type"] == "HEARTBEAT"
-
-
-# ---------------------------------------------------------------------------
-# LEAVE (explicit disconnect)
-# ---------------------------------------------------------------------------
 
 
 def test_leave_removes_peer_from_room(client):
@@ -299,11 +269,6 @@ def test_leave_emits_peer_left_event(client, test_event_log):
 
     types = [e.type for e in test_event_log.get_events()]
     assert "peer.left" in types
-
-
-# ---------------------------------------------------------------------------
-# Reconnect
-# ---------------------------------------------------------------------------
 
 
 def test_reconnect_sends_reconnected_presence(client):

@@ -1,4 +1,4 @@
-"""Tests for in-memory room/peer registry."""
+"""Tests for in-memory room/peer connection manager."""
 import time
 
 import pytest
@@ -11,11 +11,6 @@ from app.connection_store import ConnectionStore
 @pytest.fixture
 def reg():
     return ConnectionManager(store=ConnectionStore())
-
-
-# ---------------------------------------------------------------------------
-# Room lifecycle
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -41,16 +36,16 @@ async def test_list_room_ids(reg: ConnectionManager):
 @pytest.mark.asyncio
 async def test_empty_room_ttl_candidates(reg: ConnectionManager):
     room_id = await reg.create_room()
-    async with reg._lock:
-        reg._room_created_at[room_id] = time.monotonic() - 1000
-    stale = await reg.get_empty_rooms_past_ttl(300.0)
+    async with reg._store._lock:
+        reg._store._room_created_at[room_id] = time.monotonic() - 1000
+    stale = await reg._store.get_empty_rooms_past_ttl(300.0)
     assert room_id in stale
 
 
 @pytest.mark.asyncio
 async def test_remove_room_if_empty(reg: ConnectionManager):
     room_id = await reg.create_room()
-    removed = await reg.remove_room_if_empty(room_id)
+    removed = await reg._store.remove_room_if_empty(room_id)
     assert removed is True
     assert not await reg.room_exists(room_id)
 
@@ -59,14 +54,9 @@ async def test_remove_room_if_empty(reg: ConnectionManager):
 async def test_remove_room_if_empty_noop_when_not_empty(reg: ConnectionManager):
     room_id = await reg.create_room()
     await reg.join_room(room_id)
-    removed = await reg.remove_room_if_empty(room_id)
+    removed = await reg._store.remove_room_if_empty(room_id)
     assert removed is False
     assert await reg.room_exists(room_id)
-
-
-# ---------------------------------------------------------------------------
-# join_room
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -112,11 +102,6 @@ async def test_join_room_already_connected(reg: ConnectionManager):
         await reg.join_room(room_id, client_id=result.client_id)
 
 
-# ---------------------------------------------------------------------------
-# WebSocket binding
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_register_unregister_ws(reg: ConnectionManager):
     room_id = await reg.create_room()
@@ -151,15 +136,10 @@ async def test_unregister_sets_disconnected_at(reg: ConnectionManager):
     before = time.monotonic()
     await reg.unregister_peer_ws(result.peer_id)
 
-    async with reg._lock:
-        disc = reg._peer_disconnected_at.get(result.peer_id)
+    async with reg._store._lock:
+        disc = reg._store._peer_disconnected_at.get(result.peer_id)
     assert disc is not None
     assert disc >= before
-
-
-# ---------------------------------------------------------------------------
-# Peer queries
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -183,11 +163,6 @@ async def test_get_other_peers_in_room(reg: ConnectionManager):
 @pytest.mark.asyncio
 async def test_get_other_peers_unknown_room(reg: ConnectionManager):
     assert await reg.get_other_peers_in_room("no-room", "no-peer") == []
-
-
-# ---------------------------------------------------------------------------
-# Peer removal
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -218,11 +193,6 @@ async def test_remove_unknown_peer_noop(reg: ConnectionManager):
     assert removed_room is None
 
 
-# ---------------------------------------------------------------------------
-# list_peers
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_list_peers(reg: ConnectionManager):
     room_id = await reg.create_room()
@@ -243,11 +213,6 @@ async def test_list_peers_unknown_room(reg: ConnectionManager):
     assert await reg.list_peers("nonexistent") == []
 
 
-# ---------------------------------------------------------------------------
-# Heartbeat / eviction
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_touch_heartbeat(reg: ConnectionManager):
     room_id = await reg.create_room()
@@ -255,19 +220,20 @@ async def test_touch_heartbeat(reg: ConnectionManager):
     await reg.register_peer_ws(result.peer_id, object())
 
     # Backdate heartbeat so the peer appears stale
-    async with reg._lock:
-        reg._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
+    async with reg._store._lock:
+        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
 
     await reg.touch_heartbeat(result.peer_id)
 
-    stale = await reg.get_stale_peer_ids(10.0)
+    stale = await reg._store.get_stale_peer_ids(10.0)
     assert result.peer_id not in stale
 
 
 @pytest.mark.asyncio
 async def test_touch_heartbeat_unknown_peer_noop(reg: ConnectionManager):
-    """touch_heartbeat for an unknown peer should not raise."""
+    """touch_heartbeat for an unknown peer should not raise or create a heartbeat entry."""
     await reg.touch_heartbeat("nonexistent-peer")
+    assert reg._store._peer_last_heartbeat.get("nonexistent-peer") is None
 
 
 @pytest.mark.asyncio
@@ -276,10 +242,10 @@ async def test_get_stale_peer_ids(reg: ConnectionManager):
     result = await reg.join_room(room_id)
     await reg.register_peer_ws(result.peer_id, object())
 
-    async with reg._lock:
-        reg._peer_last_heartbeat[result.peer_id] = time.monotonic() - 20
+    async with reg._store._lock:
+        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 20
 
-    stale = await reg.get_stale_peer_ids(10.0)
+    stale = await reg._store.get_stale_peer_ids(10.0)
     assert result.peer_id in stale
 
 
@@ -290,10 +256,10 @@ async def test_get_peers_past_reconnect_grace(reg: ConnectionManager):
     await reg.register_peer_ws(result.peer_id, object())
     await reg.unregister_peer_ws(result.peer_id)
 
-    async with reg._lock:
-        reg._peer_disconnected_at[result.peer_id] = time.monotonic() - 20
+    async with reg._store._lock:
+        reg._store._peer_disconnected_at[result.peer_id] = time.monotonic() - 20
 
-    past = await reg.get_peers_past_reconnect_grace(10.0)
+    past = await reg._store.get_peers_past_reconnect_grace(10.0)
     assert result.peer_id in past
 
 
@@ -309,11 +275,6 @@ async def test_get_all_peer_connections(reg: ConnectionManager):
     conns = await reg.get_all_peer_connections()
     assert len(conns) == 2
     assert dict(conns) == {a.peer_id: ws_a, b.peer_id: ws_b}
-
-
-# ---------------------------------------------------------------------------
-# Presence subscriptions
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -337,11 +298,6 @@ async def test_presence_subs_add_get_remove(reg: ConnectionManager):
 @pytest.mark.asyncio
 async def test_presence_subs_unknown_room(reg: ConnectionManager):
     assert await reg.get_presence_subs("no-room") == []
-
-
-# ---------------------------------------------------------------------------
-# Snapshot
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -386,11 +342,6 @@ async def test_snapshot_with_disconnected_peer(reg: ConnectionManager):
     peer_data = snap["rooms"][room_id][0]
     assert peer_data["connected"] is False
     assert peer_data["disconnected_ago"] is not None
-
-
-# ---------------------------------------------------------------------------
-# Shutdown
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

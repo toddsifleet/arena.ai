@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_registry
+from app.dependencies import get_connection_manager
 from app.schemas import CreateRoomResponse, JoinRoomResponse
 from app.value_objects import AlreadyConnected, RoomFull, RoomNotFound
 from app.connection_manager import ConnectionManager
@@ -15,8 +15,8 @@ router = APIRouter()
 
 
 @router.post("", response_model=CreateRoomResponse)
-async def create_room(registry: ConnectionManager = Depends(get_registry)) -> CreateRoomResponse:
-    room_id = await registry.create_room()
+async def create_room(connection_manager: ConnectionManager = Depends(get_connection_manager)) -> CreateRoomResponse:
+    room_id = await connection_manager.create_room()
     return CreateRoomResponse(room_id=room_id)
 
 
@@ -24,10 +24,10 @@ async def create_room(registry: ConnectionManager = Depends(get_registry)) -> Cr
 async def join_room(
     room_id: UUID,
     client_id: str | None = None,
-    registry: ConnectionManager = Depends(get_registry),
+    connection_manager: ConnectionManager = Depends(get_connection_manager),
 ) -> JoinRoomResponse:
     try:
-        result = await registry.join_room(str(room_id), client_id)
+        result = await connection_manager.join_room(str(room_id), client_id)
     except RoomNotFound as exc:
         raise HTTPException(status_code=404, detail="room_not_found") from exc
     except RoomFull as exc:
@@ -46,9 +46,9 @@ async def join_room(
 @router.get("/{room_id}/peers")
 async def list_peers(
     room_id: UUID,
-    registry: ConnectionManager = Depends(get_registry),
+    connection_manager: ConnectionManager = Depends(get_connection_manager),
 ) -> dict:
-    peers = await registry.list_peers(str(room_id))
+    peers = await connection_manager.list_peers(str(room_id))
     return {
         "peers": [
             {"id": p.peer_id, "client_id": p.client_id, "connected": p.connected}

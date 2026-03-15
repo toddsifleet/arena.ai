@@ -65,11 +65,6 @@ async def test_to_dict_shape():
     assert d["data"] == {"room_id": "abc"}
 
 
-# ---------------------------------------------------------------------------
-# Subscriber fan-out
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_subscribe_receives_events():
     el = EventLog()

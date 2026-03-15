@@ -6,9 +6,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-# --- REST API schemas ---
-
-
 class CreateRoomResponse(BaseModel):
     room_id: str
 
@@ -18,9 +15,6 @@ class JoinRoomResponse(BaseModel):
     peer_id: str
     client_id: str
     signaling_path: str = "/peerjs"
-
-
-# --- Dashboard WebSocket wire format ---
 
 
 class EventPayload(BaseModel):
@@ -66,7 +60,7 @@ class DashboardSnapshot(BaseModel):
 
 
 def build_snapshot(raw: dict[str, Any], events: list[EventPayload] | None = None) -> str:
-    """Convert the raw dict from ``Registry.snapshot()`` into a serialised ``DashboardSnapshot``."""
+    """Convert the raw dict from ``ConnectionManager.snapshot()`` into a serialised ``DashboardSnapshot``."""
     rooms = [
         RoomSnap(
             room_id=room_id,
@@ -80,9 +74,6 @@ def build_snapshot(raw: dict[str, Any], events: list[EventPayload] | None = None
         events=events,
     )
     return snap.model_dump_json()
-
-
-# --- Signaling / Presence WebSocket wire format ---
 
 
 class ErrorPayload(BaseModel):

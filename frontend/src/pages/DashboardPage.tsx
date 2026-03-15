@@ -11,15 +11,11 @@ import EventLogPanel from "../components/dashboard/EventLogPanel";
 import SystemInfoCard from "../components/dashboard/SystemInfoCard";
 import type { EventItem, PeerState, Stats, WsMessage, WsStatus } from "../components/dashboard/types";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 const WS_BASE = (import.meta.env.VITE_WEBSOCKET_URL as string | undefined) || "http://localhost:9000";
 
 function getDashboardWsUrl(): string {
   return WS_BASE.replace(/^http/, "ws") + "/dashboard/stream";
 }
-
-// ── Dashboard Page ────────────────────────────────────────────────────────────
 
 const MAX_EVENTS = 200;
 
@@ -142,7 +138,6 @@ const DashboardPage: Component = () => {
       } else if (msg.type === "EVENT") {
         const ev = msg.event;
 
-        // Append to event log
         setFreshEventId(ev.id);
         setTotalEventsSeen((n) => n + 1);
         setEvents((prev) => {
@@ -172,7 +167,6 @@ const DashboardPage: Component = () => {
   createEffect(() => {
     events(); // track
     if (autoScroll() && logRef) {
-      // already newest-first, so we scroll to top
       logRef.scrollTop = 0;
     }
   });

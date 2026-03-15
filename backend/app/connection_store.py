@@ -34,8 +34,6 @@ class ConnectionStore:
         self._peer_disconnected_at: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
-    # --- Room lifecycle ---
-
     async def create_room(self) -> str:
         room_id = _generate_id()
         async with self._lock:
@@ -95,8 +93,6 @@ class ConnectionStore:
                 return True
         return False
 
-    # --- Peer queries ---
-
     async def get_peer_room(self, peer_id: str) -> str | None:
         async with self._lock:
             return self._peer_to_room.get(peer_id)
@@ -109,7 +105,6 @@ class ConnectionStore:
             return [p for p in peers if p != exclude_peer_id]
 
     async def list_peers(self, room_id: str) -> list[PeerInfo]:
-        """Atomic snapshot of all peers in a room."""
         async with self._lock:
             peer_ids = self._room_to_peers.get(room_id)
             if peer_ids is None:
@@ -122,8 +117,6 @@ class ConnectionStore:
                 )
                 for pid in peer_ids
             ]
-
-    # --- Peer connection state ---
 
     async def mark_peer_connected(self, peer_id: str) -> bool:
         """Record that a peer's WebSocket is now active.
@@ -186,15 +179,12 @@ class ConnectionStore:
         self._peer_disconnected_at.pop(peer_id, None)
         return room_id, room_destroyed
 
-    # --- Heartbeat ---
-
     async def touch_heartbeat(self, peer_id: str) -> None:
         async with self._lock:
             if peer_id in self._peer_last_heartbeat:
                 self._peer_last_heartbeat[peer_id] = time.monotonic()
 
     async def get_stale_peer_ids(self, timeout_seconds: float) -> list[str]:
-        """Peers with no heartbeat response within timeout_seconds."""
         async with self._lock:
             now = time.monotonic()
             return [
@@ -204,7 +194,6 @@ class ConnectionStore:
             ]
 
     async def get_peers_past_reconnect_grace(self, grace_seconds: float) -> list[str]:
-        """Peers disconnected longer than grace_seconds."""
         async with self._lock:
             now = time.monotonic()
             return [
@@ -214,7 +203,6 @@ class ConnectionStore:
             ]
 
     async def get_empty_rooms_past_ttl(self, ttl_seconds: float) -> list[str]:
-        """Room IDs that are still empty after ttl_seconds since creation."""
         async with self._lock:
             now = time.monotonic()
             return [
@@ -224,10 +212,7 @@ class ConnectionStore:
                 and now - self._room_created_at.get(room_id, now) > ttl_seconds
             ]
 
-    # --- Snapshot ---
-
     async def snapshot(self) -> dict:
-        """Full state snapshot for the dashboard."""
         async with self._lock:
             now = time.monotonic()
             rooms: dict[str, list[dict]] = {}
@@ -260,10 +245,7 @@ class ConnectionStore:
                 },
             }
 
-    # --- Shutdown ---
-
     async def shutdown(self) -> None:
-        """Clear all state."""
         async with self._lock:
             self._room_to_peers.clear()
             self._room_created_at.clear()

@@ -1,19 +1,5 @@
-"""Event log: subscribes to ConnectionManager events, stores a circular buffer,
-and fans out to connected dashboard WebSocket subscribers.
-
-Flow on every state change
---------------------------
-ConnectionManager._dispatch(RegistryEvent)
-  → EventLog._on_registry_event(event)
-      → translate event → EventPayload
-      → append to circular buffer
-      → send DashboardEvent  (type="EVENT")    to all dashboard WS subs
-      → fetch fresh snapshot
-      → send DashboardSnapshot (type="SNAPSHOT") to all dashboard WS subs
-
-Signal events (offer/answer/candidate) are emitted directly via ``emit()``
-and only fan out the EVENT message — they carry no state change.
-"""
+"""Circular event buffer that subscribes to ConnectionManager events and fans out
+to dashboard WebSocket subscribers."""
 from __future__ import annotations
 
 import logging
@@ -39,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 def _translate(event: RegistryEvent) -> tuple[str, dict[str, Any]]:
-    """Map a typed registry event to ``(event_type_string, data_dict)``."""
     if isinstance(event, RoomCreated):
         return "room.created", {"room_id": event.room_id}
 
@@ -81,24 +66,20 @@ class EventLog:
         self._events: deque[EventPayload] = deque(maxlen=maxlen)
         self._counter: int = 0
         self._subscribers: set[Any] = set()
-        self._registry: ConnectionManager | None = None
+        self._connection_manager: ConnectionManager | None = None
 
-    def subscribe_to_registry(self, registry: ConnectionManager) -> None:
-        """Wire this log to a ConnectionManager so it receives all state-change events."""
-        self._registry = registry
-        registry.add_listener(self._on_registry_event)
+    def subscribe_to_connection_manager(self, connection_manager: ConnectionManager) -> None:
+        self._connection_manager = connection_manager
+        connection_manager.add_listener(self._on_connection_manager_event)
 
-    # --- Listeners ---
-
-    async def _on_registry_event(self, event: RegistryEvent) -> None:
-        """Translate, store, and broadcast; then push a fresh snapshot."""
+    async def _on_connection_manager_event(self, event: RegistryEvent) -> None:
         event_type, data = _translate(event)
         payload = self._record(event_type, data)
         await self._broadcast_event(payload)
         await self._broadcast_snapshot()
 
     async def emit(self, event_type: str, data: dict[str, Any]) -> EventPayload:
-        """Emit a non-registry event (e.g. signaling messages).
+        """Emit a non-connection-manager event (e.g. signaling messages).
 
         These are stored and broadcast as EVENT messages only — they carry
         no room-state change so no snapshot is pushed.
@@ -106,8 +87,6 @@ class EventLog:
         payload = self._record(event_type, data)
         await self._broadcast_event(payload)
         return payload
-
-    # --- Internal helpers ---
 
     def _record(self, event_type: str, data: dict[str, Any]) -> EventPayload:
         self._counter += 1
@@ -125,9 +104,9 @@ class EventLog:
         await self._fanout(msg)
 
     async def _broadcast_snapshot(self) -> None:
-        if not self._registry or not self._subscribers:
+        if not self._connection_manager or not self._subscribers:
             return
-        raw = await self._registry.snapshot()
+        raw = await self._connection_manager.snapshot()
         msg = build_snapshot(raw)
         await self._fanout(msg)
 
@@ -139,8 +118,6 @@ class EventLog:
             except Exception:
                 dead.add(ws)
         self._subscribers -= dead
-
-    # --- Dashboard WS subscription ---
 
     def subscribe(self, ws: Any) -> None:
         self._subscribers.add(ws)

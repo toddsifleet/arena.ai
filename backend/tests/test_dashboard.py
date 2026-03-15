@@ -2,11 +2,6 @@
 import pytest
 
 
-# ---------------------------------------------------------------------------
-# GET /dashboard/snapshot
-# ---------------------------------------------------------------------------
-
-
 def test_snapshot_empty(client):
     resp = client.get("/dashboard/snapshot")
     assert resp.status_code == 200
@@ -72,11 +67,6 @@ def test_snapshot_room_peer_detail(client):
     assert room_peers[0]["connected"] is False
 
 
-# ---------------------------------------------------------------------------
-# WS /dashboard/stream
-# ---------------------------------------------------------------------------
-
-
 def test_stream_sends_initial_snapshot(client):
     """On connect the stream immediately sends a SNAPSHOT message."""
     with client.websocket_connect("/dashboard/stream") as ws:
@@ -96,17 +86,17 @@ def test_stream_initial_snapshot_includes_events(client, test_event_log):
         assert "room.created" in event_types
 
 
-def test_stream_receives_event_push(client, test_registry):
+def test_stream_receives_event_push(client, test_connection_manager):
     """After connecting, new events are pushed as EVENT messages."""
     with client.websocket_connect("/dashboard/stream") as ws:
         ws.receive_json()  # initial SNAPSHOT
 
-        # Call reg.create_room() directly via the TestClient's anyio portal so it
+        # Call create_room() directly via the TestClient's anyio portal so it
         # runs on the same event loop as the WebSocket handler.  A plain HTTP POST
         # would deadlock because TestClient is single-threaded and the server would
         # try to push to the open WS while the test thread is blocked waiting for
         # the HTTP response.
-        client.portal.call(test_registry.create_room)
+        client.portal.call(test_connection_manager.create_room)
 
         msg = ws.receive_json()
         assert msg["type"] == "EVENT"

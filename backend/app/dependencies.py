@@ -7,8 +7,8 @@ from app.event_log import EventLog
 from app.connection_manager import ConnectionManager
 
 
-def get_registry(request: HTTPConnection) -> ConnectionManager:
-    return request.app.state.registry
+def get_connection_manager(request: HTTPConnection) -> ConnectionManager:
+    return request.app.state.connection_manager
 
 
 def get_event_log(request: HTTPConnection) -> EventLog:

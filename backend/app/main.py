@@ -17,19 +17,19 @@ from app.routes import dashboard, health, presence, rooms, signaling
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup: start heartbeat task. Shutdown: cancel task, close all peer connections, then registry."""
-    app.state.registry = ConnectionManager(store=ConnectionStore())
+    """Startup: start heartbeat task. Shutdown: cancel task, close all peer connections, then connection manager."""
+    app.state.connection_manager = ConnectionManager(store=ConnectionStore())
     app.state.event_log = EventLog(maxlen=200)
-    app.state.event_log.subscribe_to_registry(app.state.registry)
-    task = asyncio.create_task(app.state.registry.heartbeat_loop())
+    app.state.event_log.subscribe_to_connection_manager(app.state.connection_manager)
+    task = asyncio.create_task(app.state.connection_manager.heartbeat_loop())
     yield
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         pass
-    await app.state.registry.close_all_peer_connections()
-    await app.state.registry.shutdown()
+    await app.state.connection_manager.close_all_peer_connections()
+    await app.state.connection_manager.shutdown()
 
 
 app = FastAPI(

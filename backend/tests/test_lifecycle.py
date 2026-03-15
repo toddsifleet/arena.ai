@@ -31,7 +31,7 @@ def reg():
 @pytest.fixture
 def el(reg):
     el = EventLog()
-    el.subscribe_to_registry(reg)
+    el.subscribe_to_connection_manager(reg)
     return el
 
 
@@ -48,8 +48,12 @@ async def test_heartbeat_loop_cancellable():
 
 @pytest.mark.asyncio
 async def test_evict_noop_when_empty():
-    """With no peers registered, eviction completes without error."""
-    await ConnectionManager(store=ConnectionStore())._evict_stale_peers()
+    """With no peers registered, eviction completes without error and leaves state clean."""
+    reg = ConnectionManager(store=ConnectionStore())
+    await reg._evict_stale_peers()
+    assert await reg.list_room_ids() == []
+    snap = await reg.snapshot()
+    assert snap["stats"]["total_peers"] == 0
 
 
 @pytest.mark.asyncio
@@ -61,8 +65,8 @@ async def test_evict_stale_peer(reg, el):
     await reg.register_peer_ws(result.peer_id, ws)
 
     # Backdate heartbeat far beyond the timeout threshold
-    async with reg._lock:
-        reg._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
+    async with reg._store._lock:
+        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -86,8 +90,8 @@ async def test_evict_stale_peer_emits_disconnected_presence(reg, el):
     await reg.register_peer_ws(peer_b.peer_id, ws_b)
 
     # Only peer_a goes stale
-    async with reg._lock:
-        reg._peer_last_heartbeat[peer_a.peer_id] = time.monotonic() - 100
+    async with reg._store._lock:
+        reg._store._peer_last_heartbeat[peer_a.peer_id] = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -109,8 +113,8 @@ async def test_evict_peer_past_reconnect_grace(reg, el):
     await reg.unregister_peer_ws(result.peer_id)
 
     # Backdate disconnect time far beyond grace period
-    async with reg._lock:
-        reg._peer_disconnected_at[result.peer_id] = time.monotonic() - 100
+    async with reg._store._lock:
+        reg._store._peer_disconnected_at[result.peer_id] = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -127,8 +131,8 @@ async def test_evict_emits_room_destroyed_when_last_peer(reg, el):
     result = await reg.join_room(room_id)
     await reg.register_peer_ws(result.peer_id, FakeWS())
 
-    async with reg._lock:
-        reg._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
+    async with reg._store._lock:
+        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -144,8 +148,8 @@ async def test_evict_grace_emits_room_destroyed(reg, el):
     await reg.register_peer_ws(result.peer_id, FakeWS())
     await reg.unregister_peer_ws(result.peer_id)
 
-    async with reg._lock:
-        reg._peer_disconnected_at[result.peer_id] = time.monotonic() - 100
+    async with reg._store._lock:
+        reg._store._peer_disconnected_at[result.peer_id] = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -184,5 +188,8 @@ async def test_close_all_tolerates_failing_ws():
     result = await reg.join_room(room_id)
     await reg.register_peer_ws(result.peer_id, BrokenWS())
 
-    # Should not propagate the exception
     await reg.close_all_peer_connections()
+
+    # Exception was swallowed and cleanup still completed
+    assert await reg.get_ws(result.peer_id) is None
+    assert await reg.get_all_peer_connections() == []

@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from app.dependencies import get_event_log, get_registry
+from app.dependencies import get_event_log, get_connection_manager
 from app.event_log import EventLog
 from app.connection_manager import ConnectionManager, send_json
 from app.schemas import (
@@ -32,7 +32,7 @@ async def signaling_ws(
     websocket: WebSocket,
     id: str | None = Query(None, alias="id"),
     key: str | None = Query(None),
-    registry: ConnectionManager = Depends(get_registry),
+    connection_manager: ConnectionManager = Depends(get_connection_manager),
     event_log: EventLog = Depends(get_event_log),
 ) -> None:
     await websocket.accept()
@@ -42,7 +42,7 @@ async def signaling_ws(
         await websocket.close()
         return
 
-    room_id = await registry.peer_in_room(peer_id)
+    room_id = await connection_manager.peer_in_room(peer_id)
     if not room_id:
         await send_json(
             websocket,
@@ -51,13 +51,13 @@ async def signaling_ws(
         await websocket.close()
         return
 
-    was_reconnecting = await registry.register_peer_ws(peer_id, websocket)
+    was_reconnecting = await connection_manager.register_peer_ws(peer_id, websocket)
     await send_json(websocket, OpenMessage(payload=OpenPayload(id=peer_id)))
-    await registry.notify_presence(peer_id, room_id, "reconnected" if was_reconnecting else "joined")
+    await connection_manager.notify_presence(peer_id, room_id, "reconnected" if was_reconnecting else "joined")
 
     # Tell this peer about everyone already connected so it doesn't have to wait for the poll
-    for other_id in await registry.get_other_peers_in_room(room_id, peer_id):
-        if await registry.get_ws(other_id):
+    for other_id in await connection_manager.get_other_peers_in_room(room_id, peer_id):
+        if await connection_manager.get_ws(other_id):
             await send_json(
                 websocket,
                 PresenceMessage(
@@ -75,7 +75,7 @@ async def signaling_ws(
                 continue
 
             msg_type = incoming.normalized_type
-            await registry.touch_heartbeat(peer_id)
+            await connection_manager.touch_heartbeat(peer_id)
 
             if msg_type == "HEARTBEAT":
                 await send_json(websocket, HeartbeatMessage())
@@ -83,10 +83,10 @@ async def signaling_ws(
                 dst = incoming.resolved_dst
                 if not dst:
                     continue
-                others = await registry.get_other_peers_in_room(room_id, peer_id)
+                others = await connection_manager.get_other_peers_in_room(room_id, peer_id)
                 if dst not in others:
                     continue
-                dst_ws = await registry.get_ws(dst)
+                dst_ws = await connection_manager.get_ws(dst)
                 if dst_ws:
                     try:
                         relay = SignalRelayMessage.model_validate({
@@ -98,7 +98,7 @@ async def signaling_ws(
                     except ValidationError:
                         continue
                     await send_json(dst_ws, relay)
-                # Signal events are not registry state — emit directly
+                # Signal events are not connection-manager state — emit directly
                 await event_log.emit(
                     f"signal.{msg_type.lower()}",
                     {"room_id": room_id, "src": peer_id, "dst": dst},
@@ -112,8 +112,8 @@ async def signaling_ws(
         logger.exception("signaling error for peer %s", peer_id)
     finally:
         if left_explicitly:
-            await registry.remove_peer_from_room(peer_id, cause="left")
-            await registry.notify_presence(peer_id, room_id, "left")
+            await connection_manager.remove_peer_from_room(peer_id, cause="left")
+            await connection_manager.notify_presence(peer_id, room_id, "left")
         else:
-            await registry.unregister_peer_ws(peer_id)
-            await registry.notify_presence(peer_id, room_id, "disconnected")
+            await connection_manager.unregister_peer_ws(peer_id)
+            await connection_manager.notify_presence(peer_id, room_id, "disconnected")
