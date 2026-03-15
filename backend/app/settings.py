@@ -28,8 +28,12 @@ class Settings(BaseSettings):
     heartbeat_interval_seconds: float = 5.0
     heartbeat_timeout_seconds: float = 15.0
 
-    # Reconnect: grace period in seconds before treating disconnect as final
-    reconnect_grace_seconds: float = 10.0
+    # Reconnect: grace period in seconds before treating disconnect as final.
+    # 10 s was too short for a WiFi→cellular handoff: the OS can take several
+    # seconds to switch networks, and the signaling reconnect adds more latency
+    # on top. 30 s gives the client enough runway to reconnect on a slow cell
+    # network without holding the slot forever.
+    reconnect_grace_seconds: float = 30.0
 
     # Empty room cleanup: remove unjoined rooms after this TTL
     empty_room_ttl_seconds: float = 300.0

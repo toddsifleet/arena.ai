@@ -89,20 +89,39 @@ const RoomPage: Component = () => {
     if (!pid) return;
 
     const cfg = getSignalingConfig();
+
+    // Base ICE config: always include a STUN server. If a TURN server is
+    // configured (required for peers behind CGNAT, e.g. cellular carriers),
+    // add it here. Without TURN, WebRTC media will silently fail on many
+    // mobile networks even though the signaling WebSocket works fine.
+    const iceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+    const turnUrl = import.meta.env.VITE_TURN_URL as string | undefined;
+    if (turnUrl) {
+      iceServers.push({
+        urls: turnUrl,
+        username: import.meta.env.VITE_TURN_USERNAME as string | undefined,
+        credential: import.meta.env.VITE_TURN_CREDENTIAL as string | undefined,
+      });
+    }
+
     const p = new Peer(pid, {
       host: cfg.host,
       port: cfg.port,
       path: cfg.path,
       secure: cfg.secure,
-      config: {
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      },
+      config: { iceServers },
       debug: 1,
     });
     setPeer(p);
 
     p.on("open", () => setPeerReady(true));
-    p.on("disconnected", () => setPeerReady(false));
+    p.on("disconnected", () => {
+      setPeerReady(false);
+      // Reconnect the signaling WebSocket after a transient network change
+      // (e.g. WiFi → cellular). Without this call the peer stays disconnected
+      // indefinitely and the backend eventually evicts it.
+      if (!p.destroyed) p.reconnect();
+    });
     p.on("close", () => setPeerReady(false));
     p.on("error", () => setError((prev) => prev || "Connection error"));
 
@@ -169,38 +188,67 @@ const RoomPage: Component = () => {
     setPendingIncomingCall(null);
   });
 
-  // Presence WebSocket: discover existing peers on connect and receive live join/leave events
+  // Presence WebSocket: discover existing peers on connect and receive live join/leave events.
+  // The WebSocket is reconnected with exponential backoff so that a transient network
+  // change (the same one that drops the signaling connection) doesn't permanently
+  // prevent the client from learning when the remote peer comes back.
   createEffect(() => {
     const pid = peerId();
     if (!pid) return;
 
-    const ws = new WebSocket(getPresenceWsUrl(params.id));
+    let ws: WebSocket | null = null;
+    let retryDelay = 1_000;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let dead = false;
 
-    ws.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data as string) as {
-          type: string;
-          payload: { kind: string; peer_id: string };
-        };
-        if (msg.type !== "PRESENCE") return;
-        const { kind, peer_id: who } = msg.payload;
-        if (who === pid) return; // ignore our own events
-        if (kind === "disconnected" || kind === "left") {
-          setOtherPeerId(null);
-          activeCall()?.close();
-          setActiveCall(null);
-          setRemoteStream(null);
-          setPeerDisconnected(true);
-        } else if (kind === "joined" || kind === "reconnected") {
-          setOtherPeerId(who);
-          setPeerDisconnected(false);
+    const connect = () => {
+      if (dead) return;
+      ws = new WebSocket(getPresenceWsUrl(params.id));
+
+      ws.onopen = () => {
+        retryDelay = 1_000; // reset backoff after a successful connection
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data as string) as {
+            type: string;
+            payload: { kind: string; peer_id: string };
+          };
+          if (msg.type !== "PRESENCE") return;
+          const { kind, peer_id: who } = msg.payload;
+          if (who === pid) return; // ignore our own events
+          if (kind === "disconnected" || kind === "left") {
+            setOtherPeerId(null);
+            activeCall()?.close();
+            setActiveCall(null);
+            setRemoteStream(null);
+            setPeerDisconnected(true);
+          } else if (kind === "joined" || kind === "reconnected") {
+            setOtherPeerId(who);
+            setPeerDisconnected(false);
+          }
+        } catch {
+          // ignore malformed messages
         }
-      } catch {
-        // ignore malformed messages
-      }
+      };
+
+      ws.onclose = () => {
+        if (dead) return;
+        retryTimer = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, 30_000);
+          connect();
+        }, retryDelay);
+      };
     };
 
-    onCleanup(() => ws.close());
+    connect();
+
+    onCleanup(() => {
+      dead = true;
+      clearTimeout(retryTimer);
+      ws?.close();
+    });
   });
 
   // Auto-call: lower peer ID initiates to prevent double-call
