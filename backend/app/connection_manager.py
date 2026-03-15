@@ -16,7 +16,8 @@ from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
 from app.connection_store import ConnectionStore
-from app.schemas import HeartbeatMessage, PresenceMessage, PresencePayload
+from app.protocols import WebsocketProtocol
+from app.schemas import HeartbeatMessage, PresenceMessage, PresencePayload, SnapshotData
 from app.settings import settings
 from app.value_objects import JoinResult, PeerInfo
 from app.value_objects.registry_events import (
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 Listener = Callable[[RegistryEvent], Awaitable[None]]
 
 
-async def send_json(ws: Any, obj: BaseModel | dict[str, Any]) -> None:
+async def send_json(ws: WebsocketProtocol, obj: BaseModel | dict[str, Any]) -> None:
     """Send a JSON message over a WebSocket, logging failures."""
     try:
         payload = obj.model_dump_json() if isinstance(obj, BaseModel) else json.dumps(obj)
@@ -56,8 +57,8 @@ class ConnectionManager:
 
     def __init__(self, store: ConnectionStore) -> None:
         self._store = store
-        self._peer_to_ws: dict[str, Any] = {}
-        self._room_presence_subs: dict[str, set[Any]] = {}
+        self._peer_to_ws: dict[str, WebsocketProtocol] = {}
+        self._room_presence_subs: dict[str, set[WebsocketProtocol]] = {}
         self._listeners: list[Listener] = []
 
     def add_listener(self, cb: Listener) -> None:
@@ -103,7 +104,7 @@ class ConnectionManager:
     async def list_peers(self, room_id: str) -> list[PeerInfo]:
         return await self._store.list_peers(room_id)
 
-    async def register_peer_ws(self, peer_id: str, ws: Any) -> bool:
+    async def register_peer_ws(self, peer_id: str, ws: WebsocketProtocol) -> bool:
         """Bind a WebSocket to a peer. Returns True if the peer was reconnecting."""
         was_reconnecting = await self._store.mark_peer_connected(peer_id)
         self._peer_to_ws[peer_id] = ws
@@ -113,7 +114,7 @@ class ConnectionManager:
         )
         return was_reconnecting
 
-    async def unregister_peer_ws(self, peer_id: str, ws: Any | None = None) -> str | None:
+    async def unregister_peer_ws(self, peer_id: str, ws: WebsocketProtocol | None = None) -> str | None:
         """Detach WebSocket; keep peer in room for reconnect grace. Returns room_id.
 
         When ``ws`` is supplied the unregister is skipped — and None returned —
@@ -135,10 +136,10 @@ class ConnectionManager:
             await self._dispatch(PeerDisconnected(room_id=room_id, peer_id=peer_id))
         return room_id
 
-    async def get_ws(self, peer_id: str) -> Any | None:
+    async def get_ws(self, peer_id: str) -> WebsocketProtocol | None:
         return self._peer_to_ws.get(peer_id)
 
-    async def get_all_peer_connections(self) -> list[tuple[str, Any]]:
+    async def get_all_peer_connections(self) -> list[tuple[str, WebsocketProtocol]]:
         return list(self._peer_to_ws.items())
 
 
@@ -157,9 +158,9 @@ class ConnectionManager:
         room_id, room_destroyed = await self._store.remove_peer(peer_id)
         if room_id:
             await self._dispatch(PeerRemoved(room_id=room_id, peer_id=peer_id, cause=cause))
-        if room_destroyed:
-            await self._dispatch(RoomDestroyed(room_id=room_id))
-            await self._close_presence_subs_for_room(room_id)
+            if room_destroyed:
+                await self._dispatch(RoomDestroyed(room_id=room_id))
+                await self._close_presence_subs_for_room(room_id)
         return room_id
 
     async def _close_presence_subs_for_room(self, room_id: str) -> None:
@@ -173,7 +174,7 @@ class ConnectionManager:
             except Exception:
                 logger.debug("failed to close presence sub for destroyed room %s", room_id)
 
-    async def subscribe_presence(self, room_id: str, ws: Any) -> None:
+    async def subscribe_presence(self, room_id: str, ws: WebsocketProtocol) -> None:
         """Register ws as a presence subscriber and immediately flush the current snapshot."""
         self._room_presence_subs.setdefault(room_id, set()).add(ws)
         for peer in await self._store.list_peers(room_id):
@@ -187,20 +188,20 @@ class ConnectionManager:
                     ),
                 )
 
-    async def add_presence_sub(self, room_id: str, ws: Any) -> None:
+    async def add_presence_sub(self, room_id: str, ws: WebsocketProtocol) -> None:
         self._room_presence_subs.setdefault(room_id, set()).add(ws)
 
-    async def remove_presence_sub(self, room_id: str, ws: Any) -> None:
+    async def remove_presence_sub(self, room_id: str, ws: WebsocketProtocol) -> None:
         subs = self._room_presence_subs.get(room_id)
         if subs:
             subs.discard(ws)
             if not subs:
                 del self._room_presence_subs[room_id]
 
-    async def get_presence_subs(self, room_id: str) -> list[Any]:
+    async def get_presence_subs(self, room_id: str) -> list[WebsocketProtocol]:
         return list(self._room_presence_subs.get(room_id, set()))
 
-    async def snapshot(self) -> dict:
+    async def snapshot(self) -> SnapshotData:
         return await self._store.snapshot()
 
 
@@ -229,10 +230,10 @@ class ConnectionManager:
                 logger.debug("heartbeat send failed for %s", peer_id)
 
         for peer_id in await self._store.get_stale_peer_ids(settings.heartbeat_timeout_seconds):
-            ws = self._peer_to_ws.get(peer_id)
-            if ws:
+            stale_ws = self._peer_to_ws.get(peer_id)
+            if stale_ws:
                 try:
-                    await ws.close()
+                    await stale_ws.close()
                 except Exception:
                     logger.debug("failed to close ws for stale peer %s", peer_id)
             room_id = await self.remove_peer_from_room(peer_id, cause="evicted_stale")

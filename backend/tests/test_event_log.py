@@ -30,8 +30,8 @@ async def test_emit_increments_id():
 @pytest.mark.asyncio
 async def test_get_events_returns_all():
     el = EventLog()
-    await el.emit("x", {"n": 1})
-    await el.emit("y", {"n": 2})
+    await el.emit("x", {"n": "1"})
+    await el.emit("y", {"n": "2"})
     events = el.get_events()
     assert len(events) == 2
     assert events[0].type == "x"
@@ -43,11 +43,11 @@ async def test_maxlen_truncation():
     """Oldest events are dropped once the buffer is full."""
     el = EventLog(maxlen=3)
     for i in range(5):
-        await el.emit("e", {"i": i})
+        await el.emit("e", {"i": str(i)})
     events = el.get_events()
     assert len(events) == 3
-    assert events[0].data["i"] == 2  # oldest kept
-    assert events[-1].data["i"] == 4  # newest
+    assert events[0].data["i"] == "2"  # oldest kept
+    assert events[-1].data["i"] == "4"  # newest
 
 
 @pytest.mark.asyncio
@@ -155,6 +155,6 @@ async def test_dead_subscriber_does_not_block_live_ones():
 
     el.subscribe(DeadWS())
     el.subscribe(LiveWS())
-    await el.emit("test", {"value": 42})
+    await el.emit("test", {"value": "42"})
 
     assert len(received) == 1

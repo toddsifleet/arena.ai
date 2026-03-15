@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_connection_manager
-from app.schemas import CreateRoomResponse, JoinRoomResponse
+from app.schemas import CreateRoomResponse, JoinRoomResponse, ListPeersResponse, PeerListItem
 from app.value_objects import AlreadyConnected, RoomFull, RoomNotFound
 from app.connection_manager import ConnectionManager
 from app.settings import settings
@@ -43,15 +43,12 @@ async def join_room(
     )
 
 
-@router.get("/{room_id}/peers")
+@router.get("/{room_id}/peers", response_model=ListPeersResponse)
 async def list_peers(
     room_id: UUID,
     connection_manager: ConnectionManager = Depends(get_connection_manager),
-) -> dict:
+) -> ListPeersResponse:
     peers = await connection_manager.list_peers(str(room_id))
-    return {
-        "peers": [
-            {"id": p.peer_id, "client_id": p.client_id, "connected": p.connected}
-            for p in peers
-        ],
-    }
+    return ListPeersResponse(
+        peers=[PeerListItem(id=p.peer_id, client_id=p.client_id, connected=p.connected) for p in peers]
+    )

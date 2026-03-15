@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from app.protocols import SubscriberLike
 from app.schemas import DashboardEvent, EventPayload, build_snapshot
 from app.value_objects.registry_events import (
     PeerConnected,
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _translate(event: RegistryEvent) -> tuple[str, dict[str, Any]]:
+def _translate(event: RegistryEvent) -> tuple[str, dict[str, str | bool]]:
     if isinstance(event, RoomCreated):
         return "room.created", {"room_id": event.room_id}
 
@@ -65,7 +66,7 @@ class EventLog:
     def __init__(self, maxlen: int = 200) -> None:
         self._events: deque[EventPayload] = deque(maxlen=maxlen)
         self._counter: int = 0
-        self._subscribers: set[Any] = set()
+        self._subscribers: set[SubscriberLike] = set()
         self._connection_manager: ConnectionManager | None = None
 
     def subscribe_to_connection_manager(self, connection_manager: ConnectionManager) -> None:
@@ -78,7 +79,7 @@ class EventLog:
         await self._broadcast_event(payload)
         await self._broadcast_snapshot()
 
-    async def emit(self, event_type: str, data: dict[str, Any]) -> EventPayload:
+    async def emit(self, event_type: str, data: dict[str, str | bool]) -> EventPayload:
         """Emit a non-connection-manager event (e.g. signaling messages).
 
         These are stored and broadcast as EVENT messages only — they carry
@@ -88,7 +89,7 @@ class EventLog:
         await self._broadcast_event(payload)
         return payload
 
-    def _record(self, event_type: str, data: dict[str, Any]) -> EventPayload:
+    def _record(self, event_type: str, data: dict[str, str | bool]) -> EventPayload:
         self._counter += 1
         payload = EventPayload(
             id=self._counter,
@@ -111,7 +112,7 @@ class EventLog:
         await self._fanout(msg)
 
     async def _fanout(self, msg: str) -> None:
-        dead: set[Any] = set()
+        dead: set[SubscriberLike] = set()
         for ws in list(self._subscribers):
             try:
                 await ws.send_text(msg)
@@ -119,10 +120,10 @@ class EventLog:
                 dead.add(ws)
         self._subscribers -= dead
 
-    def subscribe(self, ws: Any) -> None:
+    def subscribe(self, ws: SubscriberLike) -> None:
         self._subscribers.add(ws)
 
-    def unsubscribe(self, ws: Any) -> None:
+    def unsubscribe(self, ws: SubscriberLike) -> None:
         self._subscribers.discard(ws)
 
     def get_events(self) -> list[EventPayload]:

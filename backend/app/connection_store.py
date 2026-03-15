@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 
+from app.schemas import PeerSnapDict, SnapshotData, SnapshotStats
 from app.value_objects import AlreadyConnected, JoinResult, PeerInfo, RoomFull, RoomNotFound
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,13 @@ class ConnectionStore:
     Tracks which peers belong to which rooms, heartbeat timestamps, and
     reconnect-grace windows.  Has no knowledge of WebSockets or event
     dispatch — those concerns belong to ``ConnectionManager``.
+
+    **Restart caveat (intentional, omitted for brevity):** all state lives in
+    process memory.  A restart or crash wipes every room and peer mapping —
+    connected clients will need to rejoin.  The interface is deliberately
+    abstracted so a Redis-backed implementation can be dropped in with no
+    changes to callers; see DECISIONS.md for the full discussion of durable
+    and stateless-restart alternatives.
     """
 
     def __init__(self) -> None:
@@ -215,38 +223,36 @@ class ConnectionStore:
                 and now - self._room_created_at.get(room_id, now) > ttl_seconds
             ]
 
-    async def snapshot(self) -> dict:
+    async def snapshot(self) -> SnapshotData:
         async with self._lock:
             now = time.monotonic()
-            rooms: dict[str, list[dict]] = {}
+            rooms: dict[str, list[PeerSnapDict]] = {}
             for room_id, peer_ids in self._room_to_peers.items():
-                peers = []
+                peers: list[PeerSnapDict] = []
                 for pid in peer_ids:
                     last_hb = self._peer_last_heartbeat.get(pid)
                     disc_at = self._peer_disconnected_at.get(pid)
                     peers.append(
-                        {
-                            "peer_id": pid,
-                            "client_id": self._peer_to_client.get(pid, ""),
-                            "connected": pid in self._connected_peers,
-                            "last_heartbeat_ago": (
+                        PeerSnapDict(
+                            peer_id=pid,
+                            client_id=self._peer_to_client.get(pid, ""),
+                            connected=pid in self._connected_peers,
+                            last_heartbeat_ago=(
                                 round(now - last_hb, 1) if last_hb is not None else None
                             ),
-                            "disconnected_ago": (
+                            disconnected_ago=(
                                 round(now - disc_at, 1) if disc_at is not None else None
                             ),
-                        }
+                        )
                     )
                 rooms[room_id] = peers
-            return {
-                "rooms": rooms,
-                "stats": {
-                    "total_rooms": len(self._room_to_peers),
-                    "connected_peers": len(self._connected_peers),
-                    "disconnected_peers": len(self._peer_disconnected_at),
-                    "total_peers": len(self._peer_to_room),
-                },
-            }
+            stats = SnapshotStats(
+                total_rooms=len(self._room_to_peers),
+                connected_peers=len(self._connected_peers),
+                disconnected_peers=len(self._peer_disconnected_at),
+                total_peers=len(self._peer_to_room),
+            )
+            return SnapshotData(rooms=rooms, stats=stats)
 
     async def shutdown(self) -> None:
         async with self._lock:

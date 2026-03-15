@@ -105,7 +105,7 @@ async def test_join_room_reconnect_slot(reg):
 async def test_join_room_already_connected(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
     with pytest.raises(AlreadyConnected):
         await reg.join_room(room_id, client_id=result.client_id)
 
@@ -120,7 +120,7 @@ async def test_register_unregister_ws(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
 
-    was_reconnecting = await reg.register_peer_ws(result.peer_id, object())
+    was_reconnecting = await reg.register_peer_ws(result.peer_id, FakeWS())
     assert not was_reconnecting
     assert await reg.get_ws(result.peer_id) is not None
 
@@ -133,10 +133,10 @@ async def test_reconnect_detection(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
 
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
     await reg.unregister_peer_ws(result.peer_id)
 
-    was_reconnecting = await reg.register_peer_ws(result.peer_id, object())
+    was_reconnecting = await reg.register_peer_ws(result.peer_id, FakeWS())
     assert was_reconnecting
 
 
@@ -145,7 +145,7 @@ async def test_unregister_sets_disconnected_at(reg):
     """unregister_peer_ws records the disconnect timestamp so grace eviction works."""
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
     before = time.monotonic()
     await reg.unregister_peer_ws(result.peer_id)
 
@@ -225,7 +225,7 @@ async def test_remove_unknown_peer_noop(reg):
 async def test_list_peers(reg):
     room_id = await reg.create_room()
     a = await reg.join_room(room_id)
-    await reg.register_peer_ws(a.peer_id, object())
+    await reg.register_peer_ws(a.peer_id, FakeWS())
     b = await reg.join_room(room_id)
 
     peers = await reg.list_peers(room_id)
@@ -250,7 +250,7 @@ async def test_list_peers_unknown_room(reg):
 async def test_touch_heartbeat(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
 
     async with reg._store._lock:
         reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
@@ -278,7 +278,7 @@ async def test_get_all_peer_connections(reg):
     room_id = await reg.create_room()
     a = await reg.join_room(room_id)
     b = await reg.join_room(room_id)
-    ws_a, ws_b = object(), object()
+    ws_a, ws_b = FakeWS(), FakeWS()
     await reg.register_peer_ws(a.peer_id, ws_a)
     await reg.register_peer_ws(b.peer_id, ws_b)
 
@@ -295,7 +295,7 @@ async def test_get_all_peer_connections(reg):
 @pytest.mark.asyncio
 async def test_presence_subs_add_get_remove(reg):
     room_id = await reg.create_room()
-    ws1, ws2 = object(), object()
+    ws1, ws2 = FakeWS(), FakeWS()
 
     await reg.add_presence_sub(room_id, ws1)
     await reg.add_presence_sub(room_id, ws2)
@@ -333,7 +333,7 @@ async def test_snapshot_empty(reg):
 async def test_snapshot_with_connected_peer(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
 
     snap = await reg.snapshot()
     assert snap["stats"]["total_rooms"] == 1
@@ -352,7 +352,7 @@ async def test_snapshot_with_connected_peer(reg):
 async def test_snapshot_with_disconnected_peer(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
     await reg.unregister_peer_ws(result.peer_id)
 
     snap = await reg.snapshot()
@@ -373,7 +373,7 @@ async def test_snapshot_with_disconnected_peer(reg):
 async def test_shutdown(reg):
     room_id = await reg.create_room()
     result = await reg.join_room(room_id)
-    await reg.register_peer_ws(result.peer_id, object())
+    await reg.register_peer_ws(result.peer_id, FakeWS())
 
     await reg.shutdown()
 
@@ -534,7 +534,10 @@ async def test_close_all_tolerates_failing_ws():
     """close_all_peer_connections continues even if a WebSocket raises on close."""
 
     class BrokenWS:
-        async def close(self):
+        async def send_text(self, data: str) -> None:
+            pass
+
+        async def close(self) -> None:
             raise RuntimeError("already closed")
 
     reg = ConnectionManager(store=ConnectionStore())

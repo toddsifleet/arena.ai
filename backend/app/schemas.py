@@ -1,9 +1,35 @@
 """REST API request/response schemas and WebSocket wire-format models."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# ---------------------------------------------------------------------------
+# TypedDicts for the internal snapshot structure
+# (used as the return type of ConnectionStore/ConnectionManager.snapshot())
+# ---------------------------------------------------------------------------
+
+
+class PeerSnapDict(TypedDict):
+    peer_id: str
+    client_id: str
+    connected: bool
+    last_heartbeat_ago: float | None
+    disconnected_ago: float | None
+
+
+class SnapshotStats(TypedDict):
+    total_rooms: int
+    connected_peers: int
+    disconnected_peers: int
+    total_peers: int
+
+
+class SnapshotData(TypedDict):
+    rooms: dict[str, list[PeerSnapDict]]
+    stats: SnapshotStats
 
 
 class CreateRoomResponse(BaseModel):
@@ -20,7 +46,7 @@ class JoinRoomResponse(BaseModel):
 class EventPayload(BaseModel):
     id: int
     type: str
-    data: dict[str, Any]
+    data: dict[str, str | bool]
     timestamp: float
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,26 +80,36 @@ class StatsSnap(BaseModel):
 
 class DashboardSnapshot(BaseModel):
     type: Literal["SNAPSHOT"] = "SNAPSHOT"
-    rooms: list[RoomSnap]
+    rooms: dict[str, list[PeerSnap]]
     stats: StatsSnap
     events: list[EventPayload] | None = None
 
 
-def build_snapshot(raw: dict[str, Any], events: list[EventPayload] | None = None) -> str:
-    """Convert the raw dict from ``ConnectionManager.snapshot()`` into a serialised ``DashboardSnapshot``."""
-    rooms = [
-        RoomSnap(
-            room_id=room_id,
-            peers=[PeerSnap(**p) for p in peers],
-        )
+def build_snapshot(raw: SnapshotData, events: list[EventPayload] | None = None) -> str:
+    """Convert a ``SnapshotData`` dict into a serialised ``DashboardSnapshot``."""
+    rooms = {
+        room_id: [PeerSnap(**p) for p in peers]
         for room_id, peers in raw["rooms"].items()
-    ]
+    }
     snap = DashboardSnapshot(
         rooms=rooms,
         stats=StatsSnap(**raw["stats"]),
         events=events,
     )
     return snap.model_dump_json()
+
+
+def snapshot_to_dashboard(raw: SnapshotData, events: list[EventPayload] | None = None) -> DashboardSnapshot:
+    """Convert a ``SnapshotData`` dict into a ``DashboardSnapshot`` model."""
+    rooms = {
+        room_id: [PeerSnap(**p) for p in peers]
+        for room_id, peers in raw["rooms"].items()
+    }
+    return DashboardSnapshot(
+        rooms=rooms,
+        stats=StatsSnap(**raw["stats"]),
+        events=events,
+    )
 
 
 class ErrorPayload(BaseModel):
@@ -144,3 +180,13 @@ class SignalRelayMessage(BaseModel):
     src: str
     dst: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class PeerListItem(BaseModel):
+    id: str
+    client_id: str
+    connected: bool
+
+
+class ListPeersResponse(BaseModel):
+    peers: list[PeerListItem]

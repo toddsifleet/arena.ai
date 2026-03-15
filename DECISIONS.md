@@ -4,13 +4,13 @@
 
 Signaling for WebRTC needs a way to relay short-lived messages (offer, answer, ICE candidates) between two browsers that don't yet have a direct connection. The three realistic options:
 
-| Transport | Latency | Bidirectional | Connection cost | Complexity |
-|-----------|---------|---------------|-----------------|------------|
-| WebSocket | Low | Yes | 1 TCP conn/peer | Low |
-| SSE + POST | Low | Simulated (two channels) | 1 SSE + N POSTs | Medium |
-| Long-polling | Variable | Simulated | Repeated HTTP | High |
+| Transport    | Latency  | Bidirectional            | Connection cost | Complexity |
+| ------------ | -------- | ------------------------ | --------------- | ---------- |
+| WebSocket    | Low      | Yes                      | 1 TCP conn/peer | Low        |
+| SSE + POST   | Low      | Simulated (two channels) | 1 SSE + N POSTs | Medium     |
+| Long-polling | Variable | Simulated                | Repeated HTTP   | High       |
 
-WebSocket wins because signaling is inherently bidirectional (server sends ICE candidates to client *and* client sends them to server), low-latency matters during call setup, and a single persistent connection doubles as a heartbeat/presence channel. SSE could work but forces the client into a split-brain model (one channel for reads, POST for writes) with no real upside. Long-polling adds latency and complexity for no benefit.
+WebSocket wins because signaling is inherently bidirectional (server sends ICE candidates to client _and_ client sends them to server), low-latency matters during call setup, and a single persistent connection doubles as a heartbeat/presence channel. SSE could work but forces the client into a split-brain model (one channel for reads, POST for writes) with no real upside. Long-polling adds latency and complexity for no benefit.
 
 REST handles room creation, join, and peer listing -- operations that are request/response shaped and benefit from HTTP semantics (status codes, caching headers, easy curl debugging).
 
@@ -56,7 +56,13 @@ This is trivially handled by a single process. A Python asyncio process can mana
 
 ### What actually breaks
 
-**State durability.** The in-memory registry means a deploy or crash wipes all active rooms. Every connected user would need to rejoin. At 208 concurrent rooms, this disrupts ~400 people mid-call. Fix: persist room/peer state in Redis. The registry interface already abstracts this -- swap the dict-based implementation for Redis-backed calls.
+**State durability (known limitation, omitted for brevity).** The `ConnectionStore` is pure in-memory. A process restart — planned or otherwise — wipes every room, peer mapping, and reconnect-grace window. Every connected user would need to rejoin.
+
+This was a deliberate scope decision. Fixing it is well-understood and the code is already structured to make it straightforward:
+
+**Option A — Redis-backed store.** The `ConnectionStore` interface is already fully abstracted behind async method calls with no WebSocket coupling. A Redis implementation would swap the in-process `dict` and `set` fields for Redis hashes and sets with the same method signatures. Key layout would mirror the current field names (`room:{id}:peers`, `peer:{id}:room`, etc.). Atomic operations (SETNX for create, SADD/SREM for membership) replace the `asyncio.Lock`. Redis TTLs handle stale-room cleanup without a background task. The rest of the codebase — `ConnectionManager`, routes, tests — wouldn't change.
+
+**Option B — Stateless restart via client consensus.** If you want zero server-side persistence, the clients can carry enough state to rebuild a room after a restart:
 
 **Horizontal scaling.** Two instances have separate memory. If peer A hits instance 1 and peer B hits instance 2, signaling messages can't be forwarded. There are two broad approaches: a pub/sub layer (Redis pub/sub, NATS) so any instance can relay to any other, or deterministic routing so both peers in a room always land on the same instance. At scale, deterministic routing via a consistent hash ring is the stronger choice -- see below.
 
@@ -182,14 +188,14 @@ This is rate-limited and should not be used in production.
 
 ## Technologies at play
 
-| Technology | What it does |
-|-----------|-------------|
-| **WebRTC** | Browser API for peer-to-peer audio/video. Handles codec negotiation, encryption, NAT traversal, and adaptive bitrate. |
-| **SDP (Session Description Protocol)** | Text format describing media capabilities (codecs, ports, ICE candidates). Exchanged as "offer" and "answer" during call setup. |
-| **ICE** | Protocol for discovering and testing network paths between peers. Gathers candidates from STUN/TURN and performs connectivity checks. |
-| **STUN** | Lightweight protocol to discover your public IP and port. Used to generate "server-reflexive" ICE candidates. No media flows through it. |
-| **TURN** | Relay server that forwards media when direct connection fails. Media flows *through* the TURN server, so it has real bandwidth cost. |
-| **DTLS-SRTP** | Encryption layer for WebRTC media. DTLS negotiates keys; SRTP encrypts audio/video packets. Mandatory in all browsers -- even TURN-relayed media is end-to-end encrypted between peers. |
-| **PeerJS** | Client library wrapping WebRTC. Abstracts offer/answer/ICE exchange behind a simple `call()` / `answer()` API, communicating with a signaling server over WebSocket. |
-| **FastAPI** | Python async web framework. Handles both REST endpoints and WebSocket connections in the same process on a single event loop. |
-| **Xirsys** | Managed TURN provider. Supplies geo-distributed relay endpoints and a credential API for generating short-lived tokens. Chosen over self-hosted coturn to avoid infra ops at this stage; the only variable cost that grows meaningfully with traffic. |
+| Technology                             | What it does                                                                                                                                                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **WebRTC**                             | Browser API for peer-to-peer audio/video. Handles codec negotiation, encryption, NAT traversal, and adaptive bitrate.                                                                                                                                 |
+| **SDP (Session Description Protocol)** | Text format describing media capabilities (codecs, ports, ICE candidates). Exchanged as "offer" and "answer" during call setup.                                                                                                                       |
+| **ICE**                                | Protocol for discovering and testing network paths between peers. Gathers candidates from STUN/TURN and performs connectivity checks.                                                                                                                 |
+| **STUN**                               | Lightweight protocol to discover your public IP and port. Used to generate "server-reflexive" ICE candidates. No media flows through it.                                                                                                              |
+| **TURN**                               | Relay server that forwards media when direct connection fails. Media flows _through_ the TURN server, so it has real bandwidth cost.                                                                                                                  |
+| **DTLS-SRTP**                          | Encryption layer for WebRTC media. DTLS negotiates keys; SRTP encrypts audio/video packets. Mandatory in all browsers -- even TURN-relayed media is end-to-end encrypted between peers.                                                               |
+| **PeerJS**                             | Client library wrapping WebRTC. Abstracts offer/answer/ICE exchange behind a simple `call()` / `answer()` API, communicating with a signaling server over WebSocket.                                                                                  |
+| **FastAPI**                            | Python async web framework. Handles both REST endpoints and WebSocket connections in the same process on a single event loop.                                                                                                                         |
+| **Xirsys**                             | Managed TURN provider. Supplies geo-distributed relay endpoints and a credential API for generating short-lived tokens. Chosen over self-hosted coturn to avoid infra ops at this stage; the only variable cost that grows meaningfully with traffic. |

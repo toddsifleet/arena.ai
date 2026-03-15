@@ -1,6 +1,3 @@
-"""Tests for dashboard REST snapshot and WebSocket stream endpoints."""
-import pytest
-
 
 def test_snapshot_empty(client):
     resp = client.get("/dashboard/snapshot")
@@ -68,7 +65,6 @@ def test_snapshot_room_peer_detail(client):
 
 
 def test_stream_sends_initial_snapshot(client):
-    """On connect the stream immediately sends a SNAPSHOT message."""
     with client.websocket_connect("/dashboard/stream") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "SNAPSHOT"
@@ -76,8 +72,8 @@ def test_stream_sends_initial_snapshot(client):
         assert "stats" in msg
 
 
-def test_stream_initial_snapshot_includes_events(client, test_event_log):
-    room_id = client.post("/rooms").json()["room_id"]
+def test_stream_initial_snapshot_includes_events(client):
+    assert client.post("/rooms").json()["room_id"]
 
     with client.websocket_connect("/dashboard/stream") as ws:
         msg = ws.receive_json()
@@ -87,7 +83,6 @@ def test_stream_initial_snapshot_includes_events(client, test_event_log):
 
 
 def test_stream_receives_event_push(client, test_connection_manager):
-    """After connecting, new events are pushed as EVENT messages."""
     with client.websocket_connect("/dashboard/stream") as ws:
         ws.receive_json()  # initial SNAPSHOT
 

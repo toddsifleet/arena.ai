@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from app.schemas import build_snapshot
+from app.schemas import build_snapshot, snapshot_to_dashboard, DashboardSnapshot
 from app.dependencies import get_event_log, get_connection_manager
 from app.event_log import EventLog
 from app.connection_manager import ConnectionManager
@@ -15,15 +15,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/dashboard/snapshot")
+@router.get("/dashboard/snapshot", response_model=DashboardSnapshot)
 async def dashboard_snapshot(
     connection_manager: ConnectionManager = Depends(get_connection_manager),
     event_log: EventLog = Depends(get_event_log),
-) -> dict:
+) -> DashboardSnapshot:
     """Return the full current state + recent event history."""
     raw = await connection_manager.snapshot()
-    raw["events"] = [e.model_dump() for e in event_log.get_events()]
-    return raw
+    return snapshot_to_dashboard(raw, events=event_log.get_events())
 
 
 @router.websocket("/dashboard/stream")
