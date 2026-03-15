@@ -1,0 +1,45 @@
+---
+description: MiniRTC project requirements and recruiter spec for job interview submission
+alwaysApply: true
+---
+
+# MiniRTC — Project Requirements
+
+This project is a **job interview submission** for a 1:1 calling product. All code, decisions, and documentation should reflect engineering judgment appropriate for that context.
+
+## Product: MiniRTC
+
+A simple one-to-one (1:1) real-time calling product.
+
+## Core User Flow
+
+1. User creates or joins a room by URL
+2. Two users in the same room can start a call (audio required, video optional)
+3. Basic call UI must include:
+   - Join / Leave controls
+   - Mute / Unmute
+   - Connection status indicator
+   - Error handling for common failure cases
+
+## Backend Requirements
+
+- Any transport that makes sense — be ready to explain *why* that transport was chosen
+- Room membership tracking with presence events
+- Minimal security: room IDs must be non-guessable or validated
+
+## Required Deliverables
+
+- `README.md`: how to run locally, what was built, what was intentionally skipped
+- `DECISIONS.md`: tradeoffs, scaling/cost analysis, and explanation of the technologies involved — must address:
+  - What breaks at 10k rooms/day
+  - How to keep costs sane
+  - NAT traversal / TURN strategy for production
+- Repo link (or zip)
+- Optional: deployed link and/or short demo
+
+## Engineering Standards for This Project
+
+- Prefer clarity over cleverness — this is being read by a recruiter/engineer
+- Document non-obvious decisions inline and in `DECISIONS.md`
+- Do not over-engineer; scope is intentionally limited to 1:1 calls
+- Skipping something intentionally is fine — call it out in `README.md`
