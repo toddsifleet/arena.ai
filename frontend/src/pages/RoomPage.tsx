@@ -30,6 +30,7 @@ const RoomPage: Component = () => {
   const [muted, setMuted] = createSignal(false);
   const [videoOff, setVideoOff] = createSignal(false);
   const [peerDisconnected, setPeerDisconnected] = createSignal(false);
+  const [pendingIceRestart, setPendingIceRestart] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [joining, setJoining] = createSignal(true);
   const [copied, setCopied] = createSignal(false);
@@ -84,6 +85,48 @@ const RoomPage: Component = () => {
     void initRoom();
   });
 
+  // Attach event handlers to an established MediaConnection (outgoing or incoming).
+  const bindCall = (call: MediaConnection) => {
+    call.on("stream", setRemoteStream);
+    call.on("close", () => {
+      setRemoteStream(null);
+      setActiveCall(null);
+      setPendingIceRestart(false);
+      setPeerDisconnected(true);
+    });
+
+    // Monitor ICE connection state so we can attempt a restart on network
+    // changes (e.g. WiFi → cellular) without tearing down the full call.
+    // 'disconnected' is transient — the browser retries for ~5 s before
+    // escalating to 'failed'. We set a flag here; the actual restartIce()
+    // call is deferred until we know the remote peer's signaling is back up.
+    const pc = call.peerConnection;
+    pc.addEventListener("iceconnectionstatechange", () => {
+      const s = pc.iceConnectionState;
+      if (s === "disconnected") {
+        setPendingIceRestart(true);
+      } else if (s === "connected" || s === "completed") {
+        setPendingIceRestart(false);
+      }
+      // 'failed': PeerJS closes the MediaConnection → call.on("close") fires.
+    });
+
+    setActiveCall(call);
+  };
+
+  // Attempt an ICE restart on the active call if conditions are met.
+  // Only the caller (lower peer ID) initiates — same tiebreak rule as the
+  // original call — so both sides don't restart simultaneously.
+  const tryIceRestart = () => {
+    const call = activeCall();
+    const myId = peerId();
+    const otherId = otherPeerId();
+    if (!pendingIceRestart() || !call || !myId || !otherId) return;
+    if (myId >= otherId) return;
+    call.peerConnection.restartIce();
+    setPendingIceRestart(false);
+  };
+
   createEffect(() => {
     const pid = peerId();
     if (!pid) return;
@@ -119,7 +162,12 @@ const RoomPage: Component = () => {
     });
     setPeer(p);
 
-    p.on("open", () => setPeerReady(true));
+    p.on("open", () => {
+      setPeerReady(true);
+      // If our own signaling WS dropped and just reconnected while an ICE
+      // restart was pending, attempt it now.
+      tryIceRestart();
+    });
     p.on("disconnected", () => {
       setPeerReady(false);
       // Reconnect the signaling WebSocket after a transient network change
@@ -141,19 +189,6 @@ const RoomPage: Component = () => {
   createEffect(() => {
     const p = peer();
     if (!p) return;
-
-    const bindCall = (call: MediaConnection) => {
-      call.on("stream", setRemoteStream);
-      call.on("close", () => {
-        setRemoteStream(null);
-        setActiveCall(null);
-        if (pendingIncomingCall() === call) {
-          setPendingIncomingCall(null);
-        }
-        setPeerDisconnected(true);
-      });
-      setActiveCall(call);
-    };
 
     const onCall = (incoming: MediaConnection) => {
       const stream = localStream();
@@ -180,16 +215,7 @@ const RoomPage: Component = () => {
     const stream = localStream();
     if (!incoming || !stream || activeCall()) return;
     incoming.answer(stream);
-    incoming.on("stream", setRemoteStream);
-    incoming.on("close", () => {
-      setRemoteStream(null);
-      setActiveCall(null);
-      if (pendingIncomingCall() === incoming) {
-        setPendingIncomingCall(null);
-      }
-      setPeerDisconnected(true);
-    });
-    setActiveCall(incoming);
+    bindCall(incoming);
     setPendingIncomingCall(null);
   });
 
@@ -232,6 +258,11 @@ const RoomPage: Component = () => {
           } else if (kind === "joined" || kind === "reconnected") {
             setOtherPeerId(who);
             setPeerDisconnected(false);
+            // Remote peer's signaling is back up — if an ICE restart was pending
+            // (our peerConnection is still alive but ICE went disconnected during
+            // the network switch), trigger it now so the call resumes without a
+            // full teardown.
+            tryIceRestart();
           }
         } catch {
           // ignore malformed messages
@@ -270,13 +301,7 @@ const RoomPage: Component = () => {
     if (!myId || myId >= other) return;
 
     const c = p.call(other, stream);
-    setActiveCall(c);
-    c.on("stream", setRemoteStream);
-    c.on("close", () => {
-      setRemoteStream(null);
-      setActiveCall(null);
-      setPeerDisconnected(true);
-    });
+    bindCall(c);
   });
 
   const toggleMute = () => {
