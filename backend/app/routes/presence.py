@@ -11,7 +11,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from app.dependencies import get_registry
-from app.connection_manager import ConnectionManager
+from app.connection_manager import ConnectionManager, send_json
+from app.schemas import PresenceMessage, PresencePayload
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,17 @@ async def presence_ws(
     room = str(room_id)
     await websocket.accept()
     await registry.add_presence_sub(room, websocket)
+
+    # Send the current snapshot so the client doesn't need to poll for initial state.
+    for peer in await registry.list_peers(room):
+        if await registry.get_ws(peer.peer_id):
+            await send_json(
+                websocket,
+                PresenceMessage(
+                    payload=PresencePayload(kind="reconnected", peer_id=peer.peer_id, room_id=room)
+                ),
+            )
+
     try:
         while True:
             await websocket.receive_text()

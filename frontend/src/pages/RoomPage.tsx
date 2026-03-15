@@ -9,7 +9,7 @@ import {
 import { Peer } from "peerjs";
 import type { MediaConnection } from "peerjs";
 import { useParams, useNavigate } from "@solidjs/router";
-import { joinRoom, getPeersInRoom, getSignalingConfig, getPresenceWsUrl } from "../rtc";
+import { joinRoom, getSignalingConfig, getPresenceWsUrl } from "../rtc";
 import { useClient } from "../context/ClientContext";
 import VideoGrid from "../components/VideoGrid";
 import ControlButton from "../components/ControlButton";
@@ -164,27 +164,7 @@ const RoomPage: Component = () => {
     setPendingIncomingCall(null);
   });
 
-  // Poll for the other peer
-  createEffect(() => {
-    const pid = peerId();
-    if (!pid) return;
-
-    const poll = async () => {
-      try {
-        const peers = await getPeersInRoom(params.id);
-        const other = peers.find((x) => x.id !== pid);
-        setOtherPeerId(other?.id ?? null);
-      } catch {
-        // ignore poll errors
-      }
-    };
-
-    poll();
-    const t = setInterval(poll, 2000);
-    onCleanup(() => clearInterval(t));
-  });
-
-  // Presence WebSocket: instant notification when the other peer disconnects/leaves
+  // Presence WebSocket: discover existing peers on connect and receive live join/leave events
   createEffect(() => {
     const pid = peerId();
     if (!pid) return;
