@@ -13,10 +13,10 @@ import type { EventItem, PeerState, Stats, WsMessage, WsStatus } from "../compon
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) || "http://localhost:9000";
+const WS_BASE = (import.meta.env.VITE_WEBSOCKET_URL as string | undefined) || "http://localhost:9000";
 
 function getDashboardWsUrl(): string {
-  return API_BASE.replace(/^http/, "ws") + "/dashboard/stream";
+  return WS_BASE.replace(/^http/, "ws") + "/dashboard/stream";
 }
 
 // ── Dashboard Page ────────────────────────────────────────────────────────────

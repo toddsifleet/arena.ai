@@ -41,7 +41,8 @@ dist
 ```
 
 5. Set environment variable:
-   - `VITE_API_URL=https://your-backend-domain`
+   - `VITE_WEBSOCKET_URL=wss://your-backend-domain` (used for WebSocket connections; HTTP goes through the `/api` proxy)
+   - `BACKEND_URL=https://your-backend-domain` (used by Netlify to proxy `/api/*` requests)
 
 6. Verify:
    - SPA routes (like `/room/<id>`) resolve via redirect fallback.

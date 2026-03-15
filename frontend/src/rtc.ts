@@ -25,15 +25,15 @@ function parseApiUrl(url: string): { host: string; port: number; path: string; s
 }
 
 export function getSignalingConfig(): { host: string; port: number; path: string; secure: boolean } {
-  const raw = import.meta.env.VITE_API_URL as string | undefined;
+  const raw = import.meta.env.VITE_WEBSOCKET_URL as string | undefined;
   if (raw) return parseApiUrl(raw);
   return fallback;
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:9000";
+const HTTP_BASE = "/api";
 
 export async function createRoom(): Promise<{ roomId: string }> {
-  const r = await fetch(`${API_BASE}/rooms`, { method: "POST" });
+  const r = await fetch(`${HTTP_BASE}/rooms`, { method: "POST" });
   if (!r.ok) throw new Error("Failed to create room");
   const data = await r.json();
   return { roomId: data.room_id };
@@ -43,9 +43,8 @@ export async function joinRoom(
   roomId: string,
   clientId?: string | null
 ): Promise<{ roomId: string; peerId: string; clientId: string }> {
-  const url = new URL(`${API_BASE}/rooms/${encodeURIComponent(roomId)}/join`);
-  if (clientId) url.searchParams.set("client_id", clientId);
-  const r = await fetch(url.toString());
+  const qs = clientId ? `?client_id=${encodeURIComponent(clientId)}` : "";
+  const r = await fetch(`${HTTP_BASE}/rooms/${encodeURIComponent(roomId)}/join${qs}`);
   if (r.status === 403) throw new Error("room_full");
   if (r.status === 404) throw new Error("room_not_found");
   if (r.status === 400 || r.status === 422) throw new Error("invalid_room_id");
@@ -62,7 +61,7 @@ export async function joinRoom(
 export type PeerInRoom = { id: string; client_id: string; connected: boolean };
 
 export async function getPeersInRoom(roomId: string): Promise<PeerInRoom[]> {
-  const r = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomId)}/peers`);
+  const r = await fetch(`${HTTP_BASE}/rooms/${encodeURIComponent(roomId)}/peers`);
   if (!r.ok) throw new Error("Failed to list peers");
   const data = await r.json();
   return data.peers ?? [];
@@ -73,7 +72,7 @@ export type ConnectionStatus = "idle" | "connecting" | "connected" | "disconnect
 export type PresenceKind = "joined" | "left" | "disconnected" | "reconnected";
 
 export function getPresenceWsUrl(roomId: string): string {
-  const raw = (import.meta.env.VITE_API_URL as string | undefined) || "http://localhost:9000";
+  const raw = (import.meta.env.VITE_WEBSOCKET_URL as string | undefined) || "http://localhost:9000";
   const wsBase = raw.replace(/^http/, "ws");
   return `${wsBase}/rooms/${encodeURIComponent(roomId)}/presence`;
 }
