@@ -90,10 +90,11 @@ const RoomPage: Component = () => {
 
     const cfg = getSignalingConfig();
 
-    // Base ICE config: always include a STUN server. If a TURN server is
-    // configured (required for peers behind CGNAT, e.g. cellular carriers),
-    // add it here. Without TURN, WebRTC media will silently fail on many
-    // mobile networks even though the signaling WebSocket works fine.
+    // STUN is always included. TURN is optional: set VITE_TURN_URL (+ USERNAME /
+    // CREDENTIAL) to enable it. Without TURN the app still works on most
+    // networks, but calls between peers on cellular CGNAT or strict firewalls
+    // will silently fail at the media layer even though signaling succeeds —
+    // the WebSocket (TCP) connects fine, but WebRTC media (UDP) gets blocked.
     const iceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
     const turnUrl = import.meta.env.VITE_TURN_URL as string | undefined;
     if (turnUrl) {

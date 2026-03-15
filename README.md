@@ -44,6 +44,13 @@ Open `http://localhost:3000/dashboard` for the live room/event dashboard.
 
 Set `VITE_API_URL` if the backend is hosted elsewhere (e.g. `VITE_API_URL=https://my-backend.example.com`).
 
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_API_URL` | No | Backend base URL (default: same origin) |
+| `VITE_TURN_URL` | No | TURN server URL, e.g. `turn:your-server.com:3478`. Without this the app uses STUN only, which works on most home/office networks but will silently fail for peers on cellular CGNAT or strict corporate firewalls (~10–15% of real-world calls). See [DECISIONS.md](DECISIONS.md) for deployment guidance. |
+| `VITE_TURN_USERNAME` | If TURN set | TURN username |
+| `VITE_TURN_CREDENTIAL` | If TURN set | TURN credential |
+
 ### Tests
 
 ```bash
@@ -79,7 +86,7 @@ This starts backend on `http://localhost:9000` and frontend on `http://localhost
 │  (PeerJS)   │          /rooms, /peerjs           │  Signaling  │
 └──────┬──────┘                                    │   Server    │
        │                                           └──────┬──────┘
-       │         P2P media (DTLS-SRTP over ICE)           │
+       │         P2P media (DTLS-SRTP over ICE)    |      │
        │◄───────────────────────────────────-─────►│      │
        │                                           │      │
 ┌──────┴──────┐          REST + WebSocket          │      │
