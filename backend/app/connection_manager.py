@@ -113,8 +113,22 @@ class ConnectionManager:
         )
         return was_reconnecting
 
-    async def unregister_peer_ws(self, peer_id: str) -> str | None:
-        """Detach WebSocket; keep peer in room for reconnect grace. Returns room_id."""
+    async def unregister_peer_ws(self, peer_id: str, ws: Any | None = None) -> str | None:
+        """Detach WebSocket; keep peer in room for reconnect grace. Returns room_id.
+
+        When ``ws`` is supplied the unregister is skipped — and None returned —
+        if the peer has already re-registered with a *different* WebSocket.
+        This prevents a stale disconnect from a dropped TCP connection (whose
+        async read only unblocks some time after the peer has already reconnected)
+        from evicting the newly registered connection and broadcasting a spurious
+        PRESENCE disconnected event.
+        """
+        if ws is not None and self._peer_to_ws.get(peer_id) is not ws:
+            logger.debug(
+                "unregister_peer_ws: skipping stale disconnect for %s (newer ws registered)",
+                peer_id,
+            )
+            return None
         self._peer_to_ws.pop(peer_id, None)
         room_id = await self._store.mark_peer_disconnected(peer_id)
         if room_id:
