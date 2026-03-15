@@ -145,7 +145,19 @@ class ConnectionManager:
             await self._dispatch(PeerRemoved(room_id=room_id, peer_id=peer_id, cause=cause))
         if room_destroyed:
             await self._dispatch(RoomDestroyed(room_id=room_id))
+            await self._close_presence_subs_for_room(room_id)
         return room_id
+
+    async def _close_presence_subs_for_room(self, room_id: str) -> None:
+        """Close and discard all presence subscribers for a destroyed room."""
+        subs = self._room_presence_subs.pop(room_id, None)
+        if not subs:
+            return
+        for ws in subs:
+            try:
+                await ws.close()
+            except Exception:
+                logger.debug("failed to close presence sub for destroyed room %s", room_id)
 
     async def subscribe_presence(self, room_id: str, ws: Any) -> None:
         """Register ws as a presence subscriber and immediately flush the current snapshot."""
@@ -228,6 +240,7 @@ class ConnectionManager:
             removed = await self._store.remove_room_if_empty(room_id)
             if removed:
                 await self._dispatch(RoomDestroyed(room_id=room_id))
+                await self._close_presence_subs_for_room(room_id)
                 logger.info("Removed empty room %s past TTL", room_id)
 
     async def heartbeat_loop(self) -> None:
@@ -252,4 +265,5 @@ class ConnectionManager:
     async def shutdown(self) -> None:
         self._peer_to_ws.clear()
         self._room_presence_subs.clear()
+        self._listeners.clear()
         await self._store.shutdown()

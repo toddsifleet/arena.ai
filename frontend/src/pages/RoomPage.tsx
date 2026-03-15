@@ -54,6 +54,12 @@ const RoomPage: Component = () => {
       }
     };
 
+    onCleanup(() => {
+      localStream()?.getTracks().forEach((t) => t.stop());
+      activeCall()?.close();
+      pendingIncomingCall()?.close();
+    });
+
     const initRoom = async () => {
       try {
         const { peerId: p, clientId: c } = await joinRoom(params.id, clientId());
@@ -243,12 +249,16 @@ const RoomPage: Component = () => {
     navigate("/");
   };
 
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(copiedTimer));
+
   const copyRoomLink = async () => {
     const url = `${window.location.origin}/room/${params.id}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => setCopied(false), 2000);
     } catch {
       // ignore clipboard errors
     }

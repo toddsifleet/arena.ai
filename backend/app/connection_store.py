@@ -170,10 +170,13 @@ class ConnectionStore:
                     self._room_created_at.pop(room_id, None)
                     room_destroyed = True
             client_map = self._room_to_client_peer.get(room_id)
-            if client_map and client_id is not None:
-                client_map.pop(client_id, None)
-                if not client_map:
-                    del self._room_to_client_peer[room_id]
+            if client_map is not None:
+                if client_id is not None:
+                    client_map.pop(client_id, None)
+                # Always wipe the map when the room is gone to avoid a stale entry
+                # if client_id was somehow missing from _peer_to_client.
+                if room_destroyed or not client_map:
+                    self._room_to_client_peer.pop(room_id, None)
         self._connected_peers.discard(peer_id)
         self._peer_last_heartbeat.pop(peer_id, None)
         self._peer_disconnected_at.pop(peer_id, None)
