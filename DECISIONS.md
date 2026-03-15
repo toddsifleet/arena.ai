@@ -102,14 +102,40 @@ The routing layer (a lightweight reverse proxy or the load balancer itself) hash
 
 ## Keeping costs sane
 
-Signaling is cheap. The server does almost no work: accept WebSocket, forward a few JSON messages, close. At 10k rooms/day, bandwidth is negligible (<1 GB/day of signaling traffic). A $5/month VPS handles this easily.
+**TURN is the only meaningful variable cost.** Everything else is cheap:
 
-The expensive part is TURN (see below). Strategies:
+- Signaling traffic is tiny JSON (a few hundred bytes per message, a handful of messages per call setup). At 10k rooms/day, total signaling bandwidth is well under 1 GB/day. A $5/month VPS handles it comfortably. CPU and memory are negligible.
+- STUN has no bandwidth cost — it's a tiny lookup to discover your public IP and the response never touches the media path.
 
-- **Measure first.** Most calls succeed without TURN (STUN-only). Instrument the client to report whether TURN was used, and only scale TURN capacity based on actual need.
-- **Time-limited TURN credentials.** Generate short-lived TURN credentials (via TURN REST API / `coturn`'s `--lt-cred-mech`) so credentials can't be reused for abuse.
-- **Bandwidth caps.** Configure TURN to limit per-session bandwidth and total server bandwidth. Audio-only 1:1 calls use ~100 kbps; video adds ~1-2 Mbps. Set limits accordingly.
-- **Provider pricing.** If self-hosting coturn is too much ops overhead, Twilio's Network Traversal Service charges ~$0.0004/min for TURN relay. At 10k rooms/day averaging 10 minutes, worst case (all calls use TURN) is ~$40/day. In practice, <20% of calls need TURN, so ~$8/day.
+TURN is different. When two peers can't connect directly, every single bit of audio and video must pass through the TURN relay. There is no shortcut — the TURN server is in the data path for the full duration of the call. For a 1:1 call:
+
+- Audio-only: ~100 kbps per call (bidirectional, so ~200 kbps through the relay)
+- Audio + video: ~1–2 Mbps per call, up to ~4 Mbps through the relay
+
+At 10k rooms/day averaging 10 minutes with 20% needing TURN, that's roughly **6.7 TB/month** of relay traffic just from TURN. Signaling is rounding error by comparison.
+
+This is why the TURN strategy is the primary cost decision for any WebRTC product at scale.
+
+### How we use Xirsys
+
+We use [Xirsys](https://xirsys.com) as a managed TURN provider. Xirsys provides a set of TURN endpoints per region covering multiple transports (UDP on port 3478, TCP on port 80/443, TLS). Because some networks block UDP entirely, having TCP/TLS fallback endpoints is important for reliability.
+
+The `VITE_TURN_URLS` environment variable accepts a comma-separated list of URLs, which maps directly to how Xirsys returns its `iceServers` list. The browser's ICE agent tries all of them and picks the best working path:
+
+```
+VITE_TURN_URLS=turn:eu-turn7.xirsys.com:80?transport=udp,turn:eu-turn7.xirsys.com:3478?transport=udp,turns:eu-turn7.xirsys.com:443?transport=tcp
+VITE_TURN_USERNAME=<xirsys-username>
+VITE_TURN_CREDENTIAL=<xirsys-credential>
+```
+
+Xirsys pricing is bandwidth-based (~$0.0008–$0.001/MB depending on tier). At the numbers above, that's roughly **$6–$7k/month** at 10k rooms/day if every call used TURN. Since only ~20% of calls actually need relay, real cost is closer to **$1.2–$1.4k/month** at that scale.
+
+### Strategies for keeping TURN costs down
+
+- **Measure relay usage.** Instrument the client to report whether TURN was used (readable from `RTCPeerConnection.getStats()` — look for `selectedCandidatePair` with `relayProtocol`). Don't scale TURN capacity on assumptions; scale on measured relay rate.
+- **Time-limited credentials.** Xirsys generates short-lived credentials per-request via their HTTP API. We call this from the `/rooms/{id}/join` endpoint and return credentials in the join response, so the frontend never holds long-lived secrets and credentials can't be reused for abuse.
+- **Region affinity.** Xirsys has global PoPs. Route users to the nearest region to reduce relay latency and avoid cross-region bandwidth charges.
+- **Self-hosted coturn at higher scale.** Xirsys's per-MB pricing makes sense until you're running enough traffic that a dedicated VM is cheaper. A single 4-core VM with a 1 Gbps network port can relay ~500 concurrent audio+video calls. At very high scale, coturn on reserved instances beats per-MB pricing significantly — but adds ops overhead (health checks, credential rotation, geo distribution).
 
 ## NAT traversal in production
 
@@ -150,9 +176,9 @@ This is rate-limited and should not be used in production.
 
 ### What I'd do in production
 
-1. **Run coturn** on a small VM with a public IP. coturn is the standard open-source TURN server (~10 min to deploy). Configure it with time-limited credentials (TURN REST API pattern) so the signaling server generates fresh credentials per call.
-2. **Pass ICE servers from the server** as part of the `/rooms/{id}/join` response rather than baking them into the frontend build. This lets credentials rotate server-side without a redeploy, and keeps secrets off the client until they're needed.
-3. **Monitor relay usage** to decide when to add TURN capacity or switch to a managed provider (Twilio Network Traversal Service charges ~$0.0004/min; at 10k rooms/day averaging 10 min and ~20% needing TURN, that's ~$8/day).
+1. **Use Xirsys for managed TURN** (which is what this project does). Xirsys provides global PoPs, multi-transport endpoints (UDP/TCP/TLS), and a credential API so the backend can generate short-lived tokens per call. No TURN infrastructure to run.
+2. **Pass ICE servers from the server** as part of the `/rooms/{id}/join` response rather than baking them into the frontend build. This lets credentials rotate server-side without a redeploy, keeps secrets off the client until they're needed, and is exactly the pattern Xirsys's credential API enables.
+3. **Monitor relay usage** to track what fraction of calls actually use TURN. At low relay rates, Xirsys is cost-efficient. At very high scale, dedicated coturn instances may be cheaper — but that's an ops investment that only makes sense once Xirsys's per-MB cost exceeds the ops cost of running your own fleet.
 
 ## Technologies at play
 
@@ -166,3 +192,4 @@ This is rate-limited and should not be used in production.
 | **DTLS-SRTP** | Encryption layer for WebRTC media. DTLS negotiates keys; SRTP encrypts audio/video packets. Mandatory in all browsers -- even TURN-relayed media is end-to-end encrypted between peers. |
 | **PeerJS** | Client library wrapping WebRTC. Abstracts offer/answer/ICE exchange behind a simple `call()` / `answer()` API, communicating with a signaling server over WebSocket. |
 | **FastAPI** | Python async web framework. Handles both REST endpoints and WebSocket connections in the same process on a single event loop. |
+| **Xirsys** | Managed TURN provider. Supplies geo-distributed relay endpoints and a credential API for generating short-lived tokens. Chosen over self-hosted coturn to avoid infra ops at this stage; the only variable cost that grows meaningfully with traffic. |
