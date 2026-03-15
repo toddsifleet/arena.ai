@@ -141,7 +141,7 @@ Empirically, ~10–15% of real-world WebRTC calls need TURN relay to connect. Fo
 For testing without provisioning your own server, the `openrelay.metered.ca` free public TURN server works:
 
 ```
-VITE_TURN_URL=turn:openrelay.metered.ca:80
+VITE_TURN_URLS=turn:openrelay.metered.ca:80
 VITE_TURN_USERNAME=openrelay
 VITE_TURN_CREDENTIAL=openrelay
 ```

@@ -96,10 +96,14 @@ const RoomPage: Component = () => {
     // will silently fail at the media layer even though signaling succeeds —
     // the WebSocket (TCP) connects fine, but WebRTC media (UDP) gets blocked.
     const iceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
-    const turnUrl = import.meta.env.VITE_TURN_URL as string | undefined;
-    if (turnUrl) {
+    // VITE_TURN_URLS accepts a comma-separated list of TURN URLs so that
+    // providers like Xirsys can supply multiple transport options (UDP, TCP,
+    // TLS) in a single credential entry. The browser tries them in order and
+    // picks the first one that works.
+    const turnUrls = import.meta.env.VITE_TURN_URLS as string | undefined;
+    if (turnUrls) {
       iceServers.push({
-        urls: turnUrl,
+        urls: turnUrls.split(",").map((u) => u.trim()),
         username: import.meta.env.VITE_TURN_USERNAME as string | undefined,
         credential: import.meta.env.VITE_TURN_CREDENTIAL as string | undefined,
       });

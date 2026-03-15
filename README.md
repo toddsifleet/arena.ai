@@ -47,7 +47,7 @@ Set `VITE_API_URL` if the backend is hosted elsewhere (e.g. `VITE_API_URL=https:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `VITE_API_URL` | No | Backend base URL (default: same origin) |
-| `VITE_TURN_URL` | No | TURN server URL, e.g. `turn:your-server.com:3478`. Without this the app uses STUN only. Tested: works over WiFi and most home networks; **fails on T-Mobile and Verizon cellular** (both use CGNAT — the WebSocket connects fine but WebRTC media never flows). See [DECISIONS.md](DECISIONS.md) for deployment guidance and a free demo TURN option. |
+| `VITE_TURN_URLS` | No | Comma-separated list of TURN URLs, e.g. `turn:your-server.com:3478?transport=udp,turns:your-server.com:443?transport=tcp`. Without this the app uses STUN only. Tested: works over WiFi and most home networks; **fails on T-Mobile and Verizon cellular** (both use CGNAT — the WebSocket connects fine but WebRTC media never flows). See [DECISIONS.md](DECISIONS.md) for deployment guidance. |
 | `VITE_TURN_USERNAME` | If TURN set | TURN username |
 | `VITE_TURN_CREDENTIAL` | If TURN set | TURN credential |
 
