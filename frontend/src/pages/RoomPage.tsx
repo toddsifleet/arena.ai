@@ -1,11 +1,11 @@
 import {
   createEffect,
-  createSignal,
   onCleanup,
   onMount,
   Show,
   type Component,
 } from "solid-js";
+import { createStore } from "solid-js/store";
 import { Peer } from "peerjs";
 import type { MediaConnection } from "peerjs";
 import { useParams, useNavigate } from "@solidjs/router";
@@ -19,54 +19,59 @@ const RoomPage: Component = () => {
   const navigate = useNavigate();
   const { clientId, persistClientId } = useClient();
 
-  const [peerId, setPeerId] = createSignal<string | null>(null);
-  const [peer, setPeer] = createSignal<Peer | null>(null);
-  const [peerReady, setPeerReady] = createSignal(false);
-  const [localStream, setLocalStream] = createSignal<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = createSignal<MediaStream | null>(null);
-  const [activeCall, setActiveCall] = createSignal<MediaConnection | null>(null);
-  const [pendingIncomingCall, setPendingIncomingCall] = createSignal<MediaConnection | null>(null);
-  const [otherPeerId, setOtherPeerId] = createSignal<string | null>(null);
-  const [muted, setMuted] = createSignal(false);
-  const [videoOff, setVideoOff] = createSignal(false);
-  const [peerDisconnected, setPeerDisconnected] = createSignal(false);
-  const [pendingIceRestart, setPendingIceRestart] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  const [joining, setJoining] = createSignal(true);
-  const [copied, setCopied] = createSignal(false);
+  const [peerState, setPeerState] = createStore<{
+    id: string | null;
+    instance: Peer | null;
+    ready: boolean;
+    otherId: string | null;
+    disconnected: boolean;
+    pendingIceRestart: boolean;
+  }>({ id: null, instance: null, ready: false, otherId: null, disconnected: false, pendingIceRestart: false });
+
+  const [media, setMedia] = createStore<{
+    local: MediaStream | null;
+    remote: MediaStream | null;
+    active: MediaConnection | null;
+    pendingIncoming: MediaConnection | null;
+  }>({ local: null, remote: null, active: null, pendingIncoming: null });
+
+  const [ui, setUi] = createStore({
+    muted: false,
+    videoOff: false,
+    error: null as string | null,
+    joining: true,
+    copied: false,
+  });
 
   onMount(() => {
     const initMedia = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        setLocalStream(stream);
+        setMedia("local", stream);
       } catch {
         try {
           // Audio is required; video is optional, so retry without camera.
-          const audioOnly = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: true,
-          });
-          setLocalStream(audioOnly);
-          setVideoOff(true);
+          const audioOnly = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+          setMedia("local", audioOnly);
+          setUi("videoOff", true);
         } catch {
-          setError("Microphone access denied");
+          setUi("error", "Microphone access denied");
         }
       }
     };
 
     onCleanup(() => {
-      localStream()?.getTracks().forEach((t) => t.stop());
-      activeCall()?.close();
-      pendingIncomingCall()?.close();
+      media.local?.getTracks().forEach((t) => t.stop());
+      media.active?.close();
+      media.pendingIncoming?.close();
     });
 
     const initRoom = async () => {
       try {
         const { peerId: p, clientId: c } = await joinRoom(params.id, clientId());
         persistClientId(c);
-        setPeerId(p);
-        setJoining(false);
+        setPeerState("id", p);
+        setUi("joining", false);
       } catch (e) {
         const msg =
           (e as Error).message === "already_connected"
@@ -76,8 +81,8 @@ const RoomPage: Component = () => {
             : (e as Error).message === "room_full"
             ? "Room is full."
             : "Could not join room.";
-        setError(msg);
-        setJoining(false);
+        setUi("error", msg);
+        setUi("joining", false);
       }
     };
 
@@ -86,13 +91,13 @@ const RoomPage: Component = () => {
   });
 
   // Attach event handlers to an established MediaConnection (outgoing or incoming).
-  const bindCall = (call: MediaConnection) => {
-    call.on("stream", setRemoteStream);
-    call.on("close", () => {
-      setRemoteStream(null);
-      setActiveCall(null);
-      setPendingIceRestart(false);
-      setPeerDisconnected(true);
+  const bindCall = (conn: MediaConnection) => {
+    conn.on("stream", (s) => setMedia("remote", s));
+    conn.on("close", () => {
+      setMedia("remote", null);
+      setMedia("active", null);
+      setPeerState("pendingIceRestart", false);
+      setPeerState("disconnected", true);
     });
 
     // Monitor ICE connection state so we can attempt a restart on network
@@ -100,35 +105,34 @@ const RoomPage: Component = () => {
     // 'disconnected' is transient — the browser retries for ~5 s before
     // escalating to 'failed'. We set a flag here; the actual restartIce()
     // call is deferred until we know the remote peer's signaling is back up.
-    const pc = call.peerConnection;
+    const pc = conn.peerConnection;
     pc.addEventListener("iceconnectionstatechange", () => {
       const s = pc.iceConnectionState;
       if (s === "disconnected") {
-        setPendingIceRestart(true);
+        setPeerState("pendingIceRestart", true);
       } else if (s === "connected" || s === "completed") {
-        setPendingIceRestart(false);
+        setPeerState("pendingIceRestart", false);
       }
-      // 'failed': PeerJS closes the MediaConnection → call.on("close") fires.
+      // 'failed': PeerJS closes the MediaConnection → conn.on("close") fires.
     });
 
-    setActiveCall(call);
+    setMedia("active", conn);
   };
 
   // Attempt an ICE restart on the active call if conditions are met.
   // Only the caller (lower peer ID) initiates — same tiebreak rule as the
   // original call — so both sides don't restart simultaneously.
   const tryIceRestart = () => {
-    const call = activeCall();
-    const myId = peerId();
-    const otherId = otherPeerId();
-    if (!pendingIceRestart() || !call || !myId || !otherId) return;
+    const { active, } = media;
+    const { id: myId, otherId, pendingIceRestart } = peerState;
+    if (!pendingIceRestart || !active || !myId || !otherId) return;
     if (myId >= otherId) return;
-    call.peerConnection.restartIce();
-    setPendingIceRestart(false);
+    active.peerConnection.restartIce();
+    setPeerState("pendingIceRestart", false);
   };
 
   createEffect(() => {
-    const pid = peerId();
+    const pid = peerState.id;
     if (!pid) return;
 
     const cfg = getSignalingConfig();
@@ -160,45 +164,44 @@ const RoomPage: Component = () => {
       config: { iceServers },
       debug: 1,
     });
-    setPeer(p);
+    setPeerState("instance", p);
 
     p.on("open", () => {
-      setPeerReady(true);
+      setPeerState("ready", true);
       // If our own signaling WS dropped and just reconnected while an ICE
       // restart was pending, attempt it now.
       tryIceRestart();
     });
     p.on("disconnected", () => {
-      setPeerReady(false);
+      setPeerState("ready", false);
       // Reconnect the signaling WebSocket after a transient network change
       // (e.g. WiFi → cellular). Without this call the peer stays disconnected
       // indefinitely and the backend eventually evicts it.
       if (!p.destroyed) p.reconnect();
     });
-    p.on("close", () => setPeerReady(false));
-    p.on("error", () => setError((prev) => prev || "Connection error"));
+    p.on("close", () => setPeerState("ready", false));
+    p.on("error", () => setUi("error", (prev) => prev || "Connection error"));
 
     onCleanup(() => {
       p.destroy();
-      setPeer(null);
-      setPeerReady(false);
+      setPeerState("instance", null);
+      setPeerState("ready", false);
     });
   });
 
   // Answer incoming calls automatically
   createEffect(() => {
-    const p = peer();
+    const p = peerState.instance;
     if (!p) return;
 
     const onCall = (incoming: MediaConnection) => {
-      const stream = localStream();
+      const stream = media.local;
       if (!stream) {
         // First-time permission prompts can delay local media; answer once ready.
-        const pending = pendingIncomingCall();
-        if (pending && pending !== incoming) {
-          pending.close();
+        if (media.pendingIncoming && media.pendingIncoming !== incoming) {
+          media.pendingIncoming.close();
         }
-        setPendingIncomingCall(incoming);
+        setMedia("pendingIncoming", incoming);
         return;
       }
       incoming.answer(stream);
@@ -211,12 +214,12 @@ const RoomPage: Component = () => {
 
   // If a call arrived before local media was available, answer it once ready.
   createEffect(() => {
-    const incoming = pendingIncomingCall();
-    const stream = localStream();
-    if (!incoming || !stream || activeCall()) return;
-    incoming.answer(stream);
-    bindCall(incoming);
-    setPendingIncomingCall(null);
+    const { pendingIncoming } = media;
+    const stream = media.local;
+    if (!pendingIncoming || !stream || media.active) return;
+    pendingIncoming.answer(stream);
+    bindCall(pendingIncoming);
+    setMedia("pendingIncoming", null);
   });
 
   // Presence WebSocket: discover existing peers on connect and receive live join/leave events.
@@ -224,7 +227,7 @@ const RoomPage: Component = () => {
   // change (the same one that drops the signaling connection) doesn't permanently
   // prevent the client from learning when the remote peer comes back.
   createEffect(() => {
-    const pid = peerId();
+    const pid = peerState.id;
     if (!pid) return;
 
     let ws: WebSocket | null = null;
@@ -250,14 +253,14 @@ const RoomPage: Component = () => {
           const { kind, peer_id: who } = msg.payload;
           if (who === pid) return; // ignore our own events
           if (kind === "disconnected" || kind === "left") {
-            setOtherPeerId(null);
-            activeCall()?.close();
-            setActiveCall(null);
-            setRemoteStream(null);
-            setPeerDisconnected(true);
+            setPeerState("otherId", null);
+            media.active?.close();
+            setMedia("active", null);
+            setMedia("remote", null);
+            setPeerState("disconnected", true);
           } else if (kind === "joined" || kind === "reconnected") {
-            setOtherPeerId(who);
-            setPeerDisconnected(false);
+            setPeerState("otherId", who);
+            setPeerState("disconnected", false);
             // Remote peer's signaling is back up — if an ICE restart was pending
             // (our peerConnection is still alive but ICE went disconnected during
             // the network switch), trigger it now so the call resumes without a
@@ -289,41 +292,34 @@ const RoomPage: Component = () => {
 
   // Auto-call: lower peer ID initiates to prevent double-call
   createEffect(() => {
-    const p = peer();
-    const other = otherPeerId();
-    const stream = localStream();
-    const ready = peerReady();
-    const existingCall = activeCall();
+    const { instance: p, id: myId, otherId, ready } = peerState;
+    const { local: stream, active } = media;
 
-    if (!p || !other || !stream || !ready || existingCall) return;
+    if (!p || !otherId || !stream || !ready || active) return;
+    if (!myId || myId >= otherId) return;
 
-    const myId = peerId();
-    if (!myId || myId >= other) return;
-
-    const c = p.call(other, stream);
+    const c = p.call(otherId, stream);
     bindCall(c);
   });
 
   const toggleMute = () => {
-    const ls = localStream();
-    if (!ls) return;
-    const next = !muted();
-    ls.getAudioTracks().forEach((t) => (t.enabled = !next));
-    setMuted(next);
+    if (!media.local) return;
+    const next = !ui.muted;
+    media.local.getAudioTracks().forEach((t) => (t.enabled = !next));
+    setUi("muted", next);
   };
 
   const toggleVideo = () => {
-    const ls = localStream();
-    if (!ls) return;
-    const next = !videoOff();
-    ls.getVideoTracks().forEach((t) => (t.enabled = !next));
-    setVideoOff(next);
+    if (!media.local) return;
+    const next = !ui.videoOff;
+    media.local.getVideoTracks().forEach((t) => (t.enabled = !next));
+    setUi("videoOff", next);
   };
 
   const handleLeave = () => {
-    activeCall()?.close();
-    localStream()?.getTracks().forEach((t) => t.stop());
-    peer()?.destroy();
+    media.active?.close();
+    media.local?.getTracks().forEach((t) => t.stop());
+    peerState.instance?.destroy();
     navigate("/");
   };
 
@@ -334,25 +330,25 @@ const RoomPage: Component = () => {
     const url = `${window.location.origin}/room/${params.id}`;
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
+      setUi("copied", true);
       clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => setCopied(false), 2000);
+      copiedTimer = setTimeout(() => setUi("copied", false), 2000);
     } catch {
       // ignore clipboard errors
     }
   };
 
   const connectionStatus = () => {
-    if (error()) return "Error";
-    if (remoteStream()) return "Connected";
-    if (peerDisconnected()) return "Waiting";
-    if (!peerReady()) return "Connecting";
+    if (ui.error) return "Error";
+    if (media.remote) return "Connected";
+    if (peerState.disconnected) return "Waiting";
+    if (!peerState.ready) return "Connecting";
     return "Ready";
   };
 
   return (
     <Show
-      when={!joining()}
+      when={!ui.joining}
       fallback={
         <div class="min-h-screen bg-black flex items-center justify-center">
           <span class="text-neutral-600 text-sm">Joining…</span>
@@ -360,11 +356,11 @@ const RoomPage: Component = () => {
       }
     >
       <Show
-        when={peerId()}
+        when={peerState.id}
         fallback={
           <div class="min-h-screen bg-black flex items-center justify-center">
             <div class="text-center space-y-4">
-              <p class="text-red-400 text-sm">{error()}</p>
+              <p class="text-red-400 text-sm">{ui.error}</p>
               <button
                 type="button"
                 onClick={() => navigate("/")}
@@ -379,12 +375,12 @@ const RoomPage: Component = () => {
         <div class="h-screen bg-black flex flex-col overflow-hidden">
           <div class="flex-1 min-h-0 p-3">
             <VideoGrid
-              localStream={localStream()}
-              remoteStream={remoteStream()}
-              peerDisconnected={peerDisconnected()}
+              localStream={media.local}
+              remoteStream={media.remote}
+              peerDisconnected={peerState.disconnected}
               roomId={params.id}
               onCopyLink={copyRoomLink}
-              copied={copied()}
+              copied={ui.copied}
             />
           </div>
 
@@ -395,21 +391,21 @@ const RoomPage: Component = () => {
               class="font-mono text-xs text-neutral-700 hover:text-neutral-400 transition-colors truncate max-w-[140px]"
               title="Copy room link"
             >
-              {copied() ? "Copied!" : params.id}
+              {ui.copied ? "Copied!" : params.id}
             </button>
 
             <div class="flex items-center gap-2">
               <ControlButton
-                active={muted()}
+                active={ui.muted}
                 onClick={toggleMute}
-                label={muted() ? "Unmute" : "Mute"}
-                danger={muted()}
+                label={ui.muted ? "Unmute" : "Mute"}
+                danger={ui.muted}
               />
               <ControlButton
-                active={videoOff()}
+                active={ui.videoOff}
                 onClick={toggleVideo}
-                label={videoOff() ? "Cam on" : "Cam off"}
-                danger={videoOff()}
+                label={ui.videoOff ? "Cam on" : "Cam off"}
+                danger={ui.videoOff}
               />
               <button
                 type="button"
