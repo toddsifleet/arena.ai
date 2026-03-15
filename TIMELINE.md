@@ -17,4 +17,10 @@
 ## Sunday Afternoon (1.5 hrs):
 
     - Debug Reconnecting after Network change (e.g. wifi <=> Cell)
-    - Finalize Everything
+    - Finalize Code/Functionality
+
+## Sunday Evening (1hr):
+
+    - Write documentation
+
+#

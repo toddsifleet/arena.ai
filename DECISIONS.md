@@ -1,5 +1,49 @@
 # Decisions
 
+## Overview
+
+After reading the problem description, it was clear the crux of the issue was orchestrating the P2P connections. I started by doing research on open-source solutions for WebRTC and browser-based P2P. Since I wanted to focus on the backend, I decided to use PeerJS for most of the frontend client logic.
+
+I decided to use my current favorite stack:
+
+    - backend: python, fastapi, and railway
+    - frontend: typescript, solidjs, tailwindcss, and netlify
+
+From here I let Cursor bootstrap the codebase. It took about an hour of development time to get a working MVP. From there I spent about 2 more hours fine-tuning everything, and an hour deploying and debugging production/network issues.
+
+## Points of Interest
+
+### In Memory
+For this demo I decided to not have any durable storage; this means all rooms are lost during a server restart. This also means I can only run one instance of the application (assuming random routing). This would be very easy to change by updating `ConnectionStore` to be backed by Redis. There are strategies you *could* use to allow for clients to recreate rooms after a server restart/crash.
+
+### Costs
+For the most part none of the video/audio data hits our servers (it is P2P); for those calls, our costs are near 0. For "complex connections," we have to use a TURN server; this acts as a proxy. Since TURN is a proxy, its cost scales linearly with call volume.
+
+### Scaling
+This type of service scales very easily horizontally (i.e. more servers not bigger servers). Since each room knows nothing about each other room, the scaling story is very simple. I would use some sort of consistent hashing to route by room_uuid to distributed handlers.
+
+### Frontend
+I let Cursor write the entire frontend with general guidance and reviews. My goal was not to spend too much time here. I used SolidJS because that is what I've been using most recently.
+
+### Backend
+I put much more effort into the backend both in terms of code quality, test coverage, and logic included. FastAPI is my favorite Python framework; I try to stick to the "FastAPI" way when building applications.
+
+### TURN
+While testing connections I found that neither T-Mobile nor Verizon would work. So I set up a TURN server to fall back on using Xirsys (free :). TURN was a new acronym to me but the concept is not new to me — a relay server that forwards media when a direct connection fails. Data flows through the TURN server, so it has real bandwidth cost.
+
+### WebSockets
+I used WebSockets where it made sense to avoid polling.
+
+### Dashboard
+I built a [dashboard](https://arena-ai-tws.netlify.app/dashboard) to help while debugging connection/reconnection issues.
+
+### Reconnections/Network Changes
+I really wanted to make sure connections were stable even across network changes. This proved to be something I could spend a lot of time on; if I had more time, I would spend it here.
+
+ ----
+
+# Here is a summary of my research and decision-making conversations with Claude.
+
 ## Transport choice: WebSocket + REST
 
 Signaling for WebRTC needs a way to relay short-lived messages (offer, answer, ICE candidates) between two browsers that don't yet have a direct connection. The three realistic options:
