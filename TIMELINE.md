@@ -14,7 +14,7 @@
     - Setup TURN Server for cellphone connectivity
     - Make reconnections smoother
 
-## Sunday Afternoon (1 hrs):
+## Sunday Afternoon (1.5 hrs):
 
     - Debug Reconnecting after Network change (e.g. wifi <=> Cell)
     - Finalize Everything

@@ -112,8 +112,8 @@ async def signaling_ws(
         logger.exception("signaling error for peer %s", peer_id)
     finally:
         if left_explicitly:
-            await connection_manager.remove_peer_from_room(peer_id, cause="left")
             await connection_manager.notify_presence(peer_id, room_id, "left")
+            await connection_manager.remove_peer_from_room(peer_id, cause="left")
         else:
             # Pass the specific websocket so unregister_peer_ws can detect if
             # the peer reconnected before this stale disconnect was processed.
