@@ -60,7 +60,7 @@ This is trivially handled by a single process. A Python asyncio process can mana
 
 **Horizontal scaling.** Two instances have separate memory. If peer A hits instance 1 and peer B hits instance 2, signaling messages can't be forwarded. There are two broad approaches: a pub/sub layer (Redis pub/sub, NATS) so any instance can relay to any other, or deterministic routing so both peers in a room always land on the same instance. At scale, deterministic routing via a consistent hash ring is the stronger choice -- see below.
 
-### Scaling to 1M concurrent rooms with a hash ring
+### Thought Exercise: Scaling to 1M concurrent rooms with a hash ring
 
 At 1M concurrent rooms with 2 peers each, we have 2M WebSocket connections. A single Python asyncio process can comfortably hold ~50k idle WebSocket connections (signaling is bursty -- a few messages at call setup, then near-silence). That puts us at roughly **40 nodes** to serve the full load.
 
@@ -122,21 +122,37 @@ The expensive part is TURN (see below). Strategies:
 
 ### What we have today
 
-Only Google's public STUN server (`stun.l.google.com:19302`) for server-reflexive candidates. This works when both peers can reach each other after NAT hole-punching -- covers most home networks and mobile carriers.
+Only Google's public STUN server (`stun.l.google.com:19302`) for server-reflexive candidates. This works when both peers can reach each other after NAT hole-punching — covers most home networks and many mobile carriers. TURN is opt-in via the `VITE_TURN_URL` / `VITE_TURN_USERNAME` / `VITE_TURN_CREDENTIAL` environment variables (see README); without them the app falls back to STUN-only.
 
 ### What fails without TURN
 
 - **Symmetric NAT** (common in corporate networks): each outbound connection gets a different external port, so the remote peer's STUN-derived address doesn't work.
 - **Strict firewalls** that block UDP entirely.
-- **Carrier-grade NAT (CGNAT)**: sometimes works with STUN, sometimes doesn't depending on the carrier's NAT behavior.
+- **Carrier-grade NAT (CGNAT)**: the subscriber shares a public IP with thousands of other devices. The STUN reflexive candidate is either unreachable or maps to a port that the carrier's NAT won't forward.
 
-Empirically, ~10-15% of real-world WebRTC calls need TURN relay to connect.
+**Confirmed in testing:** T-Mobile and Verizon both use CGNAT on their LTE/5G networks. Calls between two peers where either side is on cellular (T-Mobile or Verizon) failed 100% of the time with STUN-only. The same devices connected successfully over WiFi. This is expected — STUN resolves a server-reflexive address, but CGNAT means that address is not routable back to the device. A TURN relay is required for these networks.
+
+The signaling WebSocket (TCP/443) works fine on both carriers regardless of CGNAT — it's the WebRTC media layer (UDP) that gets blocked. This is why the call can appear "connected" in the UI (PeerJS open, presence events flowing) while audio/video never starts.
+
+Empirically, ~10–15% of real-world WebRTC calls need TURN relay to connect. For U.S. mobile users specifically, that number is higher.
+
+### Running with TURN (demo / development)
+
+For testing without provisioning your own server, the `openrelay.metered.ca` free public TURN server works:
+
+```
+VITE_TURN_URL=turn:openrelay.metered.ca:80
+VITE_TURN_USERNAME=openrelay
+VITE_TURN_CREDENTIAL=openrelay
+```
+
+This is rate-limited and should not be used in production.
 
 ### What I'd do in production
 
 1. **Run coturn** on a small VM with a public IP. coturn is the standard open-source TURN server (~10 min to deploy). Configure it with time-limited credentials (TURN REST API pattern) so the signaling server generates fresh credentials per call.
-2. **Pass ICE servers to the client** as part of the join response: `{ iceServers: [{ urls: "stun:..." }, { urls: "turn:...", username: "...", credential: "..." }] }`. PeerJS accepts this in its constructor config.
-3. **Monitor relay usage** to decide when to add TURN capacity or switch to a managed provider.
+2. **Pass ICE servers from the server** as part of the `/rooms/{id}/join` response rather than baking them into the frontend build. This lets credentials rotate server-side without a redeploy, and keeps secrets off the client until they're needed.
+3. **Monitor relay usage** to decide when to add TURN capacity or switch to a managed provider (Twilio Network Traversal Service charges ~$0.0004/min; at 10k rooms/day averaging 10 min and ~20% needing TURN, that's ~$8/day).
 
 ## Technologies at play
 
