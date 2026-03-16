@@ -34,8 +34,8 @@ While testing connections I found that neither T-Mobile nor Verizon would work. 
 ### WebSockets
 I used WebSockets where it made sense to avoid polling.
 
-### Dashboard
-I built a [dashboard](https://arena-ai-tws.netlify.app/dashboard) to help while debugging connection/reconnection issues.
+### Dashboard/EventLog
+I added EventLogs (connect, disconnect, etc), with these I built a [dashboard](https://arena-ai-tws.netlify.app/dashboard) to help while debugging connection/reconnection issues.
 
 ### Reconnections/Network Changes
 I really wanted to make sure connections were stable even across network changes. This proved to be something I could spend a lot of time on; if I had more time, I would spend it here.
