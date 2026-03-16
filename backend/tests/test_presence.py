@@ -4,7 +4,7 @@ from starlette.websockets import WebSocketDisconnect
 
 
 def test_presence_ws_connects(client, test_connection_manager):
-    """A presence subscriber can connect, is tracked in the registry, and is removed on disconnect."""
+    """A presence subscriber can connect, is tracked in the ConnectionManager, and is removed on disconnect."""
     room_id = client.post("/rooms").json()["room_id"]
     with client.websocket_connect(f"/rooms/{room_id}/presence"):
         assert room_id in test_connection_manager._room_presence_subs

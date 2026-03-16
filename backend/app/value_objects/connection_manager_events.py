@@ -1,7 +1,7 @@
-"""Typed value objects emitted by the Registry after every state change.
+"""Typed value objects emitted by the ConnectionManager after every state change.
 
 All are frozen dataclasses so they are immutable and hashable.
-Listeners receive a ``RegistryEvent`` and can pattern-match on the type.
+Listeners receive a ``ConnectionManagerEvent`` and can pattern-match on the type.
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class PeerRemoved:
 
 
 # Union type for exhaustive listener signatures
-RegistryEvent = Union[
+ConnectionManagerEvent = Union[
     RoomCreated,
     RoomDestroyed,
     PeerJoined,

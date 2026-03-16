@@ -139,14 +139,14 @@ The routing layer (a lightweight reverse proxy or the load balancer itself) hash
 
 - **No shared state.** Each node owns its rooms entirely in-process. No Redis, no pub/sub, no distributed locking. This eliminates an entire failure domain and keeps per-message latency at microseconds instead of the milliseconds a Redis round-trip would add.
 - **Linear cost scaling.** Need 2x capacity? Add nodes. Cost grows linearly with rooms, not quadratically (which is what happens with a full-mesh pub/sub where every node must be able to reach every other node).
-- **Isolated blast radius.** A node crash only affects ~1/N of rooms. Clients on the failed node reconnect; the router hashes them to the new ring owner. The reconnect grace period already built into the registry gives the client a window to re-establish the WebSocket without losing their room slot.
+- **Isolated blast radius.** A node crash only affects ~1/N of rooms. Clients on the failed node reconnect; the router hashes them to the new ring owner. The reconnect grace period already built into the ConnectionManager gives the client a window to re-establish the WebSocket without losing their room slot.
 - **Graceful deploys.** Drain a node by removing it from the ring. Its ~1/N rooms get redistributed. Clients reconnect automatically. Rolling deploys touch one node at a time with minimal user disruption.
 
 **What you'd still need beyond the ring:**
 
 - A **service registry** (Consul, etcd, or even DNS) so the router knows which nodes are alive and where they sit on the ring.
 - A **room creation routing decision**: `POST /rooms` can go to any node; the response includes `room_id`, and all subsequent requests for that room get routed by the hash. Alternatively, the router picks the target node first and forwards the creation there.
-- **Health checks and ring rebalancing** so that when a node dies, the router updates the ring within seconds. The reconnect grace window (currently 10s) is the budget for this.
+- **Health checks and ring rebalancing** so that when a node dies, the router updates the ring within seconds. The reconnect grace window (currently 30s) is the budget for this.
 
 **Abuse.** No rate limiting or authentication. A bad actor could create thousands of rooms or hold WebSocket connections open. Fix: rate limit room creation per IP, require a short-lived token to open a WebSocket, cap connections per client.
 

@@ -57,11 +57,6 @@ source .venv/bin/activate
 pytest -v        # or: make test
 ```
 
-```bash
-cd frontend
-npm run test:run
-```
-
 ### Backend Makefile
 
 A `Makefile` lives in `backend/` with shortcuts for common tasks (run from `backend/`):
@@ -91,7 +86,7 @@ A `Makefile` lives in `backend/` with shortcuts for common tasks (run from `back
 │  (PeerJS)   │          /rooms, /peerjs                  │
 └─────────────┘                                           │
                                                      In-memory
-                                                     Registry
+                                                     ConnectionManager
 ```
 
 The signaling server is stateless from a compute perspective -- it routes JSON messages between WebSocket connections. All audio/video flows directly between browsers (or via a TURN relay, which is separate infrastructure).

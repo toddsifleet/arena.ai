@@ -5,7 +5,8 @@ import logging
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from app.schemas import build_snapshot, snapshot_to_dashboard, DashboardSnapshot
+from app.mappers import build_snapshot, snapshot_to_dashboard
+from app.schemas import DashboardSnapshot
 from app.dependencies import get_event_log, get_connection_manager
 from app.event_log import EventLog
 from app.connection_manager import ConnectionManager

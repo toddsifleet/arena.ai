@@ -20,19 +20,19 @@ from app.protocols import WebsocketProtocol
 from app.schemas import HeartbeatMessage, PresenceMessage, PresencePayload, SnapshotData
 from app.settings import settings
 from app.value_objects import JoinResult, PeerInfo
-from app.value_objects.registry_events import (
+from app.value_objects.connection_manager_events import (
     PeerConnected,
     PeerDisconnected,
     PeerJoined,
     PeerRemoved,
-    RegistryEvent,
+    ConnectionManagerEvent,
     RoomCreated,
     RoomDestroyed,
 )
 
 logger = logging.getLogger(__name__)
 
-Listener = Callable[[RegistryEvent], Awaitable[None]]
+Listener = Callable[[ConnectionManagerEvent], Awaitable[None]]
 
 
 async def send_json(ws: WebsocketProtocol, obj: BaseModel | dict[str, Any]) -> None:
@@ -52,7 +52,7 @@ class ConnectionManager:
     All persistent room/peer state lives in the store.  This class owns the
     active WebSocket bindings (``_peer_to_ws``, ``_room_presence_subs``),
     drives the heartbeat loop, broadcasts presence notifications, and
-    dispatches typed ``RegistryEvent`` dataclasses to registered listeners.
+    dispatches typed ``ConnectionManagerEvent`` dataclasses to registered listeners.
     """
 
     def __init__(self, store: ConnectionStore) -> None:
@@ -70,7 +70,7 @@ class ConnectionManager:
         except ValueError:
             pass
 
-    async def _dispatch(self, event: RegistryEvent) -> None:
+    async def _dispatch(self, event: ConnectionManagerEvent) -> None:
         """Call every listener with the event. Errors are logged and swallowed."""
         for cb in list(self._listeners):
             try:

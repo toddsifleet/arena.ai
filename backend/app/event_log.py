@@ -8,13 +8,14 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from app.protocols import SubscriberLike
-from app.schemas import DashboardEvent, EventPayload, build_snapshot
-from app.value_objects.registry_events import (
+from app.mappers import build_snapshot
+from app.schemas import DashboardEvent, EventPayload
+from app.value_objects.connection_manager_events import (
     PeerConnected,
     PeerDisconnected,
     PeerJoined,
     PeerRemoved,
-    RegistryEvent,
+    ConnectionManagerEvent,
     RoomCreated,
     RoomDestroyed,
 )
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _translate(event: RegistryEvent) -> tuple[str, dict[str, str | bool]]:
+def _translate(event: ConnectionManagerEvent) -> tuple[str, dict[str, str | bool]]:
     if isinstance(event, RoomCreated):
         return "room.created", {"room_id": event.room_id}
 
@@ -73,7 +74,7 @@ class EventLog:
         self._connection_manager = connection_manager
         connection_manager.add_listener(self._on_connection_manager_event)
 
-    async def _on_connection_manager_event(self, event: RegistryEvent) -> None:
+    async def _on_connection_manager_event(self, event: ConnectionManagerEvent) -> None:
         event_type, data = _translate(event)
         payload = self._record(event_type, data)
         await self._broadcast_event(payload)

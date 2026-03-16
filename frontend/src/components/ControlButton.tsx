@@ -10,7 +10,7 @@ interface ControlButtonProps {
 const ControlButton: Component<ControlButtonProps> = (props) => (
   <button
     type="button"
-    onClick={props.onClick}
+    onClick={() => props.onClick()}
     class={`rounded-full h-9 px-4 text-xs font-medium transition-colors ${
       props.danger
         ? "bg-red-500/15 text-red-400 hover:bg-red-500/25"

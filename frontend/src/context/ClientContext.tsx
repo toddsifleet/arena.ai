@@ -14,7 +14,9 @@ function getStoredClientId(): string | null {
 function setStoredClientId(clientId: string): void {
   try {
     localStorage.setItem(CLIENT_ID_KEY, clientId);
-  } catch {}
+  } catch {
+    // ignore localStorage errors (e.g. private browsing)
+  }
 }
 
 interface ClientContextValue {

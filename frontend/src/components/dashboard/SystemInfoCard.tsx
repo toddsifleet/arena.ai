@@ -16,13 +16,11 @@ const SystemInfoCard: Component<SystemInfoCardProps> = (props) => (
       <span class="text-white/30">Heartbeat timeout</span>
       <span class="font-mono text-white/50 text-right">15s</span>
       <span class="text-white/30">Reconnect grace</span>
-      <span class="font-mono text-white/50 text-right">10s</span>
+      <span class="font-mono text-white/50 text-right">30s</span>
       <span class="text-white/30">Max peers / room</span>
       <span class="font-mono text-white/50 text-right">2</span>
       <span class="text-white/30">Event buffer</span>
       <span class="font-mono text-white/50 text-right">{props.maxEvents} events</span>
-      <span class="text-white/30">Snapshot interval</span>
-      <span class="font-mono text-white/50 text-right">3s</span>
     </div>
   </div>
 );

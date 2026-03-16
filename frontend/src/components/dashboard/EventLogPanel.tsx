@@ -21,7 +21,7 @@ const EventLogPanel: Component<EventLogPanelProps> = (props) => (
         <span class="text-[11px] font-mono text-white/20">newest first · {props.events.length} shown</span>
         <button
           type="button"
-          onClick={props.onToggleAutoScroll}
+          onClick={() => props.onToggleAutoScroll()}
           class={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
             props.autoScroll
               ? "border-sky-500/40 text-sky-400 bg-sky-400/10"

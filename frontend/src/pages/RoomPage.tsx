@@ -122,9 +122,12 @@ const RoomPage: Component = () => {
   // Attempt an ICE restart on the active call if conditions are met.
   // Only the caller (lower peer ID) initiates — same tiebreak rule as the
   // original call — so both sides don't restart simultaneously.
-  const tryIceRestart = () => {
-    const { active, } = media;
-    const { id: myId, otherId, pendingIceRestart } = peerState;
+  const tryIceRestart = (
+    active: MediaConnection | null,
+    myId: string | null,
+    otherId: string | null,
+    pendingIceRestart: boolean,
+  ) => {
     if (!pendingIceRestart || !active || !myId || !otherId) return;
     if (myId >= otherId) return;
     active.peerConnection.restartIce();
@@ -166,12 +169,15 @@ const RoomPage: Component = () => {
     });
     setPeerState("instance", p);
 
-    p.on("open", () => {
-      setPeerState("ready", true);
-      // If our own signaling WS dropped and just reconnected while an ICE
-      // restart was pending, attempt it now.
-      tryIceRestart();
-    });
+    // Peer "open" is an event handler; we read store state when it fires (intentional).
+    p.on(
+      "open",
+      // eslint-disable-next-line solid/reactivity -- callback runs when Peer opens; reads are intentional
+      () => {
+        setPeerState("ready", true);
+        tryIceRestart(media.active, peerState.id, peerState.otherId, peerState.pendingIceRestart);
+      },
+    );
     p.on("disconnected", () => {
       setPeerState("ready", false);
       // Reconnect the signaling WebSocket after a transient network change
@@ -180,7 +186,15 @@ const RoomPage: Component = () => {
       if (!p.destroyed) p.reconnect();
     });
     p.on("close", () => setPeerState("ready", false));
-    p.on("error", () => setUi("error", (prev) => prev || "Connection error"));
+    p.on("error", (err: { type?: string; message?: string }) => {
+      const msg =
+        err.type === "peer-unavailable"
+          ? "Other peer is not available."
+          : err.type === "network"
+            ? "Network error. Check your connection."
+            : err.message || "Connection error";
+      setUi("error", (prev) => prev || msg);
+    });
 
     onCleanup(() => {
       p.destroy();
@@ -214,7 +228,7 @@ const RoomPage: Component = () => {
 
   // If a call arrived before local media was available, answer it once ready.
   createEffect(() => {
-    const { pendingIncoming } = media;
+    const pendingIncoming = media.pendingIncoming;
     const stream = media.local;
     if (!pendingIncoming || !stream || media.active) return;
     pendingIncoming.answer(stream);
@@ -265,7 +279,7 @@ const RoomPage: Component = () => {
             // (our peerConnection is still alive but ICE went disconnected during
             // the network switch), trigger it now so the call resumes without a
             // full teardown.
-            tryIceRestart();
+            tryIceRestart(media.active, peerState.id, peerState.otherId, peerState.pendingIceRestart);
           }
         } catch {
           // ignore malformed messages
@@ -292,8 +306,12 @@ const RoomPage: Component = () => {
 
   // Auto-call: lower peer ID initiates to prevent double-call
   createEffect(() => {
-    const { instance: p, id: myId, otherId, ready } = peerState;
-    const { local: stream, active } = media;
+    const p = peerState.instance;
+    const myId = peerState.id;
+    const otherId = peerState.otherId;
+    const ready = peerState.ready;
+    const stream = media.local;
+    const active = media.active;
 
     if (!p || !otherId || !stream || !ready || active) return;
     if (!myId || myId >= otherId) return;
