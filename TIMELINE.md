@@ -19,8 +19,7 @@
     - Debug Reconnecting after Network change (e.g. wifi <=> Cell)
     - Finalize Code/Functionality
 
-## Sunday Evening (1hr):
+## Sunday Evening (2hr):
 
     - Write documentation
-
-#
+    - More cleanup
