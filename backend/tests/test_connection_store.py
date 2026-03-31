@@ -44,7 +44,7 @@ async def test_get_stale_peer_ids(store):
     await store.mark_peer_connected(result.peer_id)
 
     async with store._lock:
-        store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 20
+        store._peers[result.peer_id].last_heartbeat_at = time.monotonic() - 20
 
     stale = await store.get_stale_peer_ids(10.0)
     assert result.peer_id in stale
@@ -58,7 +58,7 @@ async def test_get_peers_past_reconnect_grace(store):
     await store.mark_peer_disconnected(result.peer_id)
 
     async with store._lock:
-        store._peer_disconnected_at[result.peer_id] = time.monotonic() - 20
+        store._peers[result.peer_id].disconnected_at = time.monotonic() - 20
 
     past = await store.get_peers_past_reconnect_grace(10.0)
     assert result.peer_id in past

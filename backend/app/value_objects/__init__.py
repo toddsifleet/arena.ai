@@ -20,6 +20,16 @@ class PeerInfo:
     connected: bool
 
 
+@dataclass(slots=True)
+class PeerState:
+    peer_id: str
+    room_id: str
+    client_id: str
+    connected: bool = False
+    last_heartbeat_at: float | None = None
+    disconnected_at: float | None = None
+
+
 class RoomNotFound(Exception):
     pass
 

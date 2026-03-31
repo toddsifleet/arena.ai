@@ -7,7 +7,14 @@ import time
 import uuid
 
 from app.schemas import PeerSnapDict, SnapshotData, SnapshotStats
-from app.value_objects import AlreadyConnected, JoinResult, PeerInfo, RoomFull, RoomNotFound
+from app.value_objects import (
+    AlreadyConnected,
+    JoinResult,
+    PeerInfo,
+    PeerState,
+    RoomFull,
+    RoomNotFound,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +42,7 @@ class ConnectionStore:
         self._room_to_peers: dict[str, set[str]] = {}
         self._room_created_at: dict[str, float] = {}
         self._room_to_client_peer: dict[str, dict[str, str]] = {}
-        self._peer_to_room: dict[str, str] = {}
-        self._peer_to_client: dict[str, str] = {}
-        self._connected_peers: set[str] = set()
-        self._peer_last_heartbeat: dict[str, float] = {}
-        self._peer_disconnected_at: dict[str, float] = {}
+        self._peers: dict[str, PeerState] = {}
         self._lock = asyncio.Lock()
 
     async def create_room(self) -> str:
@@ -71,19 +74,28 @@ class ConnectionStore:
 
             if cid in client_map:
                 peer_id = client_map[cid]
-                if peer_id in self._connected_peers:
+                peer = self._peers.get(peer_id)
+                if peer and peer.connected:
                     raise AlreadyConnected(peer_id)
-                result = JoinResult(
-                    room_id=room_id, peer_id=peer_id, client_id=cid, reconnected=True
-                )
+                if not peer:
+                    peer_id = _generate_id()
+                    self._room_to_peers[room_id].add(peer_id)
+                    client_map[cid] = peer_id
+                    self._peers[peer_id] = PeerState(peer_id=peer_id, room_id=room_id, client_id=cid)
+                    result = JoinResult(
+                        room_id=room_id, peer_id=peer_id, client_id=cid, reconnected=False
+                    )
+                else:
+                    result = JoinResult(
+                        room_id=room_id, peer_id=peer_id, client_id=cid, reconnected=True
+                    )
             elif len(client_map) >= 2:
                 raise RoomFull(room_id)
             else:
                 peer_id = _generate_id()
                 self._room_to_peers[room_id].add(peer_id)
                 client_map[cid] = peer_id
-                self._peer_to_room[peer_id] = room_id
-                self._peer_to_client[peer_id] = cid
+                self._peers[peer_id] = PeerState(peer_id=peer_id, room_id=room_id, client_id=cid)
                 result = JoinResult(
                     room_id=room_id, peer_id=peer_id, client_id=cid, reconnected=False
                 )
@@ -103,7 +115,8 @@ class ConnectionStore:
 
     async def get_peer_room(self, peer_id: str) -> str | None:
         async with self._lock:
-            return self._peer_to_room.get(peer_id)
+            peer = self._peers.get(peer_id)
+            return peer.room_id if peer else None
 
     async def get_other_peers_in_room(self, room_id: str, exclude_peer_id: str) -> list[str]:
         async with self._lock:
@@ -120,8 +133,8 @@ class ConnectionStore:
             return [
                 PeerInfo(
                     peer_id=pid,
-                    client_id=self._peer_to_client.get(pid, ""),
-                    connected=pid in self._connected_peers,
+                    client_id=peer.client_id if (peer := self._peers.get(pid)) else "",
+                    connected=peer.connected if peer else False,
                 )
                 for pid in peer_ids
             ]
@@ -133,10 +146,13 @@ class ConnectionStore:
         Returns True if the peer was previously in the reconnect-grace window.
         """
         async with self._lock:
-            was_reconnecting = peer_id in self._peer_disconnected_at
-            self._peer_disconnected_at.pop(peer_id, None)
-            self._connected_peers.add(peer_id)
-            self._peer_last_heartbeat[peer_id] = time.monotonic()
+            peer = self._peers.get(peer_id)
+            if not peer:
+                return False
+            was_reconnecting = peer.disconnected_at is not None
+            peer.disconnected_at = None
+            peer.connected = True
+            peer.last_heartbeat_at = time.monotonic()
             return was_reconnecting
 
     async def mark_peer_disconnected(self, peer_id: str) -> str | None:
@@ -145,16 +161,18 @@ class ConnectionStore:
         Returns room_id if the peer was in a room, else None.
         """
         async with self._lock:
-            self._connected_peers.discard(peer_id)
-            self._peer_last_heartbeat.pop(peer_id, None)
-            room_id = self._peer_to_room.get(peer_id)
-            if room_id:
-                self._peer_disconnected_at[peer_id] = time.monotonic()
-        return room_id
+            peer = self._peers.get(peer_id)
+            if not peer:
+                return None
+            peer.connected = False
+            peer.last_heartbeat_at = None
+            peer.disconnected_at = time.monotonic()
+            return peer.room_id
 
     async def is_peer_reconnecting(self, peer_id: str) -> bool:
         async with self._lock:
-            return peer_id in self._peer_disconnected_at
+            peer = self._peers.get(peer_id)
+            return bool(peer and peer.disconnected_at is not None)
 
     async def remove_peer(self, peer_id: str) -> tuple[str | None, bool]:
         """Fully remove a peer from its room.
@@ -166,8 +184,11 @@ class ConnectionStore:
 
     def _remove_peer(self, peer_id: str) -> tuple[str | None, bool]:
         """Inner removal — caller must hold ``_lock``."""
-        room_id = self._peer_to_room.pop(peer_id, None)
-        client_id = self._peer_to_client.pop(peer_id, None)
+        peer = self._peers.pop(peer_id, None)
+        if not peer:
+            return None, False
+        room_id = peer.room_id
+        client_id = peer.client_id
         room_destroyed = False
         if room_id:
             peers = self._room_to_peers.get(room_id)
@@ -182,35 +203,31 @@ class ConnectionStore:
                 if client_id is not None:
                     client_map.pop(client_id, None)
                 # Always wipe the map when the room is gone to avoid a stale entry
-                # if client_id was somehow missing from _peer_to_client.
+                # if client_id was somehow missing from the peer store.
                 if room_destroyed or not client_map:
                     self._room_to_client_peer.pop(room_id, None)
-        self._connected_peers.discard(peer_id)
-        self._peer_last_heartbeat.pop(peer_id, None)
-        self._peer_disconnected_at.pop(peer_id, None)
         return room_id, room_destroyed
 
     async def touch_heartbeat(self, peer_id: str) -> None:
         async with self._lock:
-            if peer_id in self._peer_last_heartbeat:
-                self._peer_last_heartbeat[peer_id] = time.monotonic()
+            peer = self._peers.get(peer_id)
+            if peer and peer.last_heartbeat_at is not None:
+                peer.last_heartbeat_at = time.monotonic()
 
     async def get_stale_peer_ids(self, timeout_seconds: float) -> list[str]:
         async with self._lock:
             now = time.monotonic()
             return [
-                pid
-                for pid, t in self._peer_last_heartbeat.items()
-                if now - t > timeout_seconds
+                pid for pid, peer in self._peers.items()
+                if peer.last_heartbeat_at is not None and now - peer.last_heartbeat_at > timeout_seconds
             ]
 
     async def get_peers_past_reconnect_grace(self, grace_seconds: float) -> list[str]:
         async with self._lock:
             now = time.monotonic()
             return [
-                pid
-                for pid, t in self._peer_disconnected_at.items()
-                if now - t > grace_seconds
+                pid for pid, peer in self._peers.items()
+                if peer.disconnected_at is not None and now - peer.disconnected_at > grace_seconds
             ]
 
     async def get_empty_rooms_past_ttl(self, ttl_seconds: float) -> list[str]:
@@ -230,13 +247,16 @@ class ConnectionStore:
             for room_id, peer_ids in self._room_to_peers.items():
                 peers: list[PeerSnapDict] = []
                 for pid in peer_ids:
-                    last_hb = self._peer_last_heartbeat.get(pid)
-                    disc_at = self._peer_disconnected_at.get(pid)
+                    peer = self._peers.get(pid)
+                    if not peer:
+                        continue
+                    last_hb = peer.last_heartbeat_at
+                    disc_at = peer.disconnected_at
                     peers.append(
                         PeerSnapDict(
                             peer_id=pid,
-                            client_id=self._peer_to_client.get(pid, ""),
-                            connected=pid in self._connected_peers,
+                            client_id=peer.client_id,
+                            connected=peer.connected,
                             last_heartbeat_ago=(
                                 round(now - last_hb, 1) if last_hb is not None else None
                             ),
@@ -248,9 +268,11 @@ class ConnectionStore:
                 rooms[room_id] = peers
             stats = SnapshotStats(
                 total_rooms=len(self._room_to_peers),
-                connected_peers=len(self._connected_peers),
-                disconnected_peers=len(self._peer_disconnected_at),
-                total_peers=len(self._peer_to_room),
+                connected_peers=sum(1 for peer in self._peers.values() if peer.connected),
+                disconnected_peers=sum(
+                    1 for peer in self._peers.values() if peer.disconnected_at is not None
+                ),
+                total_peers=len(self._peers),
             )
             return SnapshotData(rooms=rooms, stats=stats)
 
@@ -259,9 +281,5 @@ class ConnectionStore:
             self._room_to_peers.clear()
             self._room_created_at.clear()
             self._room_to_client_peer.clear()
-            self._peer_to_room.clear()
-            self._peer_to_client.clear()
-            self._connected_peers.clear()
-            self._peer_last_heartbeat.clear()
-            self._peer_disconnected_at.clear()
+            self._peers.clear()
         logger.info("ConnectionStore shutdown complete")

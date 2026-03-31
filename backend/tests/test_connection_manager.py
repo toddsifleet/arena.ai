@@ -150,7 +150,8 @@ async def test_unregister_sets_disconnected_at(reg):
     await reg.unregister_peer_ws(result.peer_id)
 
     async with reg._store._lock:
-        disc = reg._store._peer_disconnected_at.get(result.peer_id)
+        peer = reg._store._peers.get(result.peer_id)
+        disc = peer.disconnected_at if peer else None
     assert disc is not None
     assert disc >= before
 
@@ -253,7 +254,7 @@ async def test_touch_heartbeat(reg):
     await reg.register_peer_ws(result.peer_id, FakeWS())
 
     async with reg._store._lock:
-        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
+        reg._store._peers[result.peer_id].last_heartbeat_at = time.monotonic() - 100
 
     await reg.touch_heartbeat(result.peer_id)
 
@@ -265,7 +266,7 @@ async def test_touch_heartbeat(reg):
 async def test_touch_heartbeat_unknown_peer_noop(reg):
     """touch_heartbeat for an unknown peer should not raise or create a heartbeat entry."""
     await reg.touch_heartbeat("nonexistent-peer")
-    assert reg._store._peer_last_heartbeat.get("nonexistent-peer") is None
+    assert reg._store._peers.get("nonexistent-peer") is None
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +419,7 @@ async def test_evict_stale_peer(reg, el):
     await reg.register_peer_ws(result.peer_id, ws)
 
     async with reg._store._lock:
-        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
+        reg._store._peers[result.peer_id].last_heartbeat_at = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -442,7 +443,7 @@ async def test_evict_stale_peer_emits_disconnected_presence(reg, el):
     await reg.register_peer_ws(peer_b.peer_id, ws_b)
 
     async with reg._store._lock:
-        reg._store._peer_last_heartbeat[peer_a.peer_id] = time.monotonic() - 100
+        reg._store._peers[peer_a.peer_id].last_heartbeat_at = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -463,7 +464,7 @@ async def test_evict_peer_past_reconnect_grace(reg, el):
     await reg.unregister_peer_ws(result.peer_id)
 
     async with reg._store._lock:
-        reg._store._peer_disconnected_at[result.peer_id] = time.monotonic() - 100
+        reg._store._peers[result.peer_id].disconnected_at = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -481,7 +482,7 @@ async def test_evict_emits_room_destroyed_when_last_peer(reg, el):
     await reg.register_peer_ws(result.peer_id, FakeWS())
 
     async with reg._store._lock:
-        reg._store._peer_last_heartbeat[result.peer_id] = time.monotonic() - 100
+        reg._store._peers[result.peer_id].last_heartbeat_at = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 
@@ -498,7 +499,7 @@ async def test_evict_grace_emits_room_destroyed(reg, el):
     await reg.unregister_peer_ws(result.peer_id)
 
     async with reg._store._lock:
-        reg._store._peer_disconnected_at[result.peer_id] = time.monotonic() - 100
+        reg._store._peers[result.peer_id].disconnected_at = time.monotonic() - 100
 
     await reg._evict_stale_peers()
 

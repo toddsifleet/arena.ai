@@ -180,6 +180,43 @@ def test_offer_emits_signal_event(client, test_event_log):
     assert "signal.offer" in types
 
 
+def test_candidate_event_includes_payload_details(client, test_event_log):
+    room_id = client.post("/rooms").json()["room_id"]
+    peer_a = _join(client, room_id)
+    peer_b = _join(client, room_id)
+
+    with client.websocket_connect(f"/peerjs?id={peer_a['peer_id']}") as ws_a:
+        ws_a.receive_json()  # OPEN
+        with client.websocket_connect(f"/peerjs?id={peer_b['peer_id']}") as ws_b:
+            ws_b.receive_json()  # OPEN
+            ws_b.receive_json()  # PRESENCE (peer_a connected)
+            ws_a.receive_json()  # PRESENCE (peer_b joined)
+
+            ws_a.send_json(
+                {
+                    "type": "CANDIDATE",
+                    "dst": peer_b["peer_id"],
+                    "payload": {
+                        "candidate": "candidate:1 1 udp 2122260223 192.168.1.42 54823 typ host",
+                        "sdpMid": "0",
+                        "sdpMLineIndex": 0,
+                    },
+                }
+            )
+            ws_b.receive_json()  # forwarded candidate
+
+    candidates = [e for e in test_event_log.get_events() if e.type == "signal.candidate"]
+    assert candidates, "expected a signal.candidate event"
+    ev = candidates[-1]
+    assert ev.data["room_id"] == room_id
+    assert ev.data["src"] == peer_a["peer_id"]
+    assert ev.data["dst"] == peer_b["peer_id"]
+    assert ev.data["candidate"].startswith("candidate:")
+    assert ev.data["sdp_mid"] == "0"
+    assert ev.data["sdp_mline_index"] == "0"
+    assert "candidate" in str(ev.data["payload_json"])
+
+
 def test_ignores_offer_to_unknown_dst(client):
     """OFFER to a peer not in the room is silently dropped."""
     room_id = client.post("/rooms").json()["room_id"]

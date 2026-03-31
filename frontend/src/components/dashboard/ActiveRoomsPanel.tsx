@@ -4,6 +4,9 @@ import type { PeerState } from "./types";
 
 interface ActiveRoomsPanelProps {
   roomEntries: Array<[string, PeerState[]]>;
+  selectedRoomId: string | null;
+  selectedPeerId: string | null;
+  onSelectPeer: (roomId: string, peerId: string) => void;
 }
 
 const ActiveRoomsPanel: Component<ActiveRoomsPanelProps> = (props) => (
@@ -28,7 +31,14 @@ const ActiveRoomsPanel: Component<ActiveRoomsPanelProps> = (props) => (
         }
       >
         <For each={props.roomEntries}>
-          {([roomId, peers]) => <RoomCard roomId={roomId} peers={peers} />}
+          {([roomId, peers]) => (
+            <RoomCard
+              roomId={roomId}
+              peers={peers}
+              selectedPeerId={props.selectedRoomId === roomId ? props.selectedPeerId : null}
+              onSelectPeer={props.onSelectPeer}
+            />
+          )}
         </For>
       </Show>
     </div>

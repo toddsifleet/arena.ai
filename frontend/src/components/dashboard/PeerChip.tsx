@@ -4,10 +4,20 @@ import { elapsedLabel, shortId } from "./utils";
 
 interface PeerChipProps {
   peer: PeerState;
+  selected?: boolean;
+  onSelect?: (peerId: string) => void;
 }
 
 const PeerChip: Component<PeerChipProps> = (props) => (
-  <div class="flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06] px-3 py-2.5">
+  <button
+    type="button"
+    onClick={() => props.onSelect?.(props.peer.peer_id)}
+    class={`w-full text-left flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+      props.selected
+        ? "bg-sky-500/10 border-sky-400/40"
+        : "bg-white/[0.04] border-white/[0.06] hover:bg-white/[0.06]"
+    }`}
+  >
     <span
       class={`shrink-0 w-2 h-2 rounded-full ${props.peer.connected ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]" : "bg-amber-400/60"}`}
     />
@@ -33,7 +43,7 @@ const PeerChip: Component<PeerChipProps> = (props) => (
         </div>
       </Show>
     </div>
-  </div>
+  </button>
 );
 
 export default PeerChip;

@@ -11,19 +11,21 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@eslint/js@^9.39.4",
         "npm:@solidjs/router@~0.15.4",
-        "npm:@solidjs/testing-library@~0.8.10",
         "npm:@tailwindcss/vite@^4.1.13",
-        "npm:@testing-library/jest-dom@^6.8.0",
-        "npm:jsdom@^26.1.0",
+        "npm:@types/node@^25.5.0",
+        "npm:eslint-plugin-solid@~0.14.5",
+        "npm:eslint@^9.39.4",
+        "npm:globals@^17.4.0",
         "npm:peerjs@^1.5.4",
         "npm:solid-devtools@~0.34.3",
         "npm:solid-js@^1.9.9",
         "npm:tailwindcss@^4.1.13",
+        "npm:typescript-eslint@^8.57.0",
         "npm:typescript@^5.9.2",
         "npm:vite-plugin-solid@^2.11.8",
-        "npm:vite@^7.1.4",
-        "npm:vitest@^2.1.9"
+        "npm:vite@^7.1.4"
       ]
     }
   }

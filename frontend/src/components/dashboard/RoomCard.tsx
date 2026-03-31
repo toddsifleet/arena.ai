@@ -5,6 +5,8 @@ import type { PeerState } from "./types";
 interface RoomCardProps {
   roomId: string;
   peers: PeerState[];
+  selectedPeerId: string | null;
+  onSelectPeer: (roomId: string, peerId: string) => void;
 }
 
 const RoomCard: Component<RoomCardProps> = (props) => {
@@ -20,7 +22,13 @@ const RoomCard: Component<RoomCardProps> = (props) => {
       </div>
       <div class="flex flex-col gap-1.5">
         <For each={props.peers} fallback={<span class="text-[11px] text-white/20 italic">no peers</span>}>
-          {(peer) => <PeerChip peer={peer} />}
+          {(peer) => (
+            <PeerChip
+              peer={peer}
+              selected={props.selectedPeerId === peer.peer_id}
+              onSelect={(peerId) => props.onSelectPeer(props.roomId, peerId)}
+            />
+          )}
         </For>
       </div>
     </div>
