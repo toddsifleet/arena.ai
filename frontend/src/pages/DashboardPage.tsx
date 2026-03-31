@@ -8,6 +8,7 @@ import ActiveRoomsPanel from "../components/dashboard/ActiveRoomsPanel";
 import DashboardHeader from "../components/dashboard/DashboardHeader";
 import DashboardStatsRow from "../components/dashboard/DashboardStatsRow";
 import EventLogPanel from "../components/dashboard/EventLogPanel";
+import MediaFlowPanel from "../components/dashboard/MediaFlowPanel";
 import PeerInspectorPanel from "../components/dashboard/PeerInspectorPanel";
 import SystemInfoCard from "../components/dashboard/SystemInfoCard";
 import type { EventItem, PeerState, Stats, WsMessage, WsStatus } from "../components/dashboard/types";
@@ -190,6 +191,11 @@ const DashboardPage: Component = () => {
     const peers = rooms()[selection.roomId] ?? [];
     return peers.find((peer) => peer.peer_id === selection.peerId) ?? null;
   };
+  const selectedRoomPeers = () => {
+    const roomId = selectedPeerRef()?.roomId;
+    if (!roomId) return [];
+    return rooms()[roomId] ?? [];
+  };
   const totalRooms = () => stats().total_rooms;
   const connectedPeers = () => stats().connected_peers;
   const disconnectedPeers = () => stats().disconnected_peers;
@@ -217,12 +223,18 @@ const DashboardPage: Component = () => {
           }}
         />
 
-        <div class="grid flex-[2] min-w-0 min-h-0 gap-4 overflow-hidden [grid-template-rows:minmax(11rem,14rem)_minmax(0,1fr)_auto]">
+        <div class="grid flex-[2] min-w-0 min-h-0 gap-4 overflow-hidden [grid-template-rows:minmax(11rem,14rem)_minmax(14rem,20rem)_minmax(0,1fr)_auto]">
           <ActiveRoomsPanel
             roomEntries={roomEntries()}
             selectedRoomId={selectedPeerRef()?.roomId ?? null}
             selectedPeerId={selectedPeerRef()?.peerId ?? null}
             onSelectPeer={(roomId, peerId) => setSelectedPeerRef({ roomId, peerId })}
+          />
+          <MediaFlowPanel
+            selectedRoomId={selectedPeerRef()?.roomId ?? null}
+            selectedPeerId={selectedPeerRef()?.peerId ?? null}
+            roomPeers={selectedRoomPeers()}
+            events={events()}
           />
           <PeerInspectorPanel
             selectedRoomId={selectedPeerRef()?.roomId ?? null}
