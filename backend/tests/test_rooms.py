@@ -108,3 +108,69 @@ def test_list_peers_connected_status(client):
     # After disconnect, connected should revert
     peers = client.get(f"/rooms/{room_id}/peers").json()["peers"]
     assert peers[0]["connected"] is False
+
+
+def test_submit_selected_pair_telemetry_emits_event(client, test_event_log):
+    room_id = client.post("/rooms").json()["room_id"]
+    peer_a = client.get(f"/rooms/{room_id}/join").json()
+    peer_b = client.get(f"/rooms/{room_id}/join").json()
+
+    resp = client.post(
+        f"/rooms/{room_id}/telemetry",
+        json={
+            "peer_id": peer_a["peer_id"],
+            "selected_pair": {
+                "dst": peer_b["peer_id"],
+                "local_candidate_type": "srflx",
+                "local_candidate_ip": "203.0.113.10",
+                "local_candidate_port": "52100",
+                "local_candidate_protocol": "udp",
+                "remote_candidate_type": "relay",
+                "remote_candidate_ip": "34.203.250.1",
+                "remote_candidate_port": "3478",
+                "remote_candidate_protocol": "udp",
+                "pair_state": "succeeded",
+                "round_trip_time_ms": "42",
+                "bytes_sent": "12000",
+                "bytes_received": "15000",
+            },
+        },
+    )
+    assert resp.status_code == 204
+
+    telemetry_events = [e for e in test_event_log.get_events() if e.type == "telemetry.selected_pair"]
+    assert telemetry_events, "expected telemetry.selected_pair event"
+    ev = telemetry_events[-1]
+    assert ev.data["room_id"] == room_id
+    assert ev.data["src"] == peer_a["peer_id"]
+    assert ev.data["dst"] == peer_b["peer_id"]
+    assert ev.data["remote_candidate_type"] == "relay"
+
+
+def test_submit_selected_pair_telemetry_rejects_wrong_room(client):
+    room_id = client.post("/rooms").json()["room_id"]
+    other_room_id = client.post("/rooms").json()["room_id"]
+    peer = client.get(f"/rooms/{room_id}/join").json()
+
+    resp = client.post(
+        f"/rooms/{other_room_id}/telemetry",
+        json={
+            "peer_id": peer["peer_id"],
+            "selected_pair": {"dst": "ignored"},
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_submit_selected_pair_telemetry_rejects_invalid_dst(client):
+    room_id = client.post("/rooms").json()["room_id"]
+    peer = client.get(f"/rooms/{room_id}/join").json()
+
+    resp = client.post(
+        f"/rooms/{room_id}/telemetry",
+        json={
+            "peer_id": peer["peer_id"],
+            "selected_pair": {"dst": "not-a-peer-in-room"},
+        },
+    )
+    assert resp.status_code == 422

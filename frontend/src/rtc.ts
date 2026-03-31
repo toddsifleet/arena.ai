@@ -76,3 +76,34 @@ export function getPresenceWsUrl(roomId: string): string {
   const wsBase = raw.replace(/^http/, "ws");
   return `${wsBase}/rooms/${encodeURIComponent(roomId)}/presence`;
 }
+
+export type SelectedPairTelemetryPayload = {
+  peer_id: string;
+  selected_pair: {
+    dst: string;
+    local_candidate_type?: string;
+    local_candidate_ip?: string;
+    local_candidate_port?: string;
+    local_candidate_protocol?: string;
+    remote_candidate_type?: string;
+    remote_candidate_ip?: string;
+    remote_candidate_port?: string;
+    remote_candidate_protocol?: string;
+    pair_state?: string;
+    round_trip_time_ms?: string;
+    available_outgoing_bitrate?: string;
+    bytes_sent?: string;
+    bytes_received?: string;
+  };
+};
+
+export async function postSelectedPairTelemetry(
+  roomId: string,
+  payload: SelectedPairTelemetryPayload,
+): Promise<void> {
+  await fetch(`${HTTP_BASE}/rooms/${encodeURIComponent(roomId)}/telemetry`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}

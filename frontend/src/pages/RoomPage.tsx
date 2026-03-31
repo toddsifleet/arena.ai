@@ -9,7 +9,7 @@ import { createStore } from "solid-js/store";
 import { Peer } from "peerjs";
 import type { MediaConnection } from "peerjs";
 import { useParams, useNavigate } from "@solidjs/router";
-import { joinRoom, getSignalingConfig, getPresenceWsUrl } from "../rtc";
+import { joinRoom, getSignalingConfig, getPresenceWsUrl, postSelectedPairTelemetry } from "../rtc";
 import { useClient } from "../context/ClientContext";
 import VideoGrid from "../components/VideoGrid";
 import ControlButton from "../components/ControlButton";
@@ -42,6 +42,102 @@ const RoomPage: Component = () => {
     joining: true,
     copied: false,
   });
+
+  type CandidateStats = {
+    candidateType?: string;
+    ip?: string;
+    port?: number;
+    protocol?: string;
+  };
+
+  type SelectedPairStats = {
+    local: CandidateStats | null;
+    remote: CandidateStats | null;
+    state?: string;
+    roundTripTimeMs?: string;
+    availableOutgoingBitrate?: string;
+    bytesSent?: string;
+    bytesReceived?: string;
+  };
+
+  const extractSelectedPairStats = async (pc: RTCPeerConnection): Promise<SelectedPairStats | null> => {
+    const stats = await pc.getStats();
+    let selectedPair: RTCStats | null = null;
+
+    for (const report of stats.values()) {
+      if (
+        report.type === "transport" &&
+        "selectedCandidatePairId" in report &&
+        typeof report.selectedCandidatePairId === "string"
+      ) {
+        selectedPair = stats.get(report.selectedCandidatePairId) ?? null;
+        if (selectedPair) break;
+      }
+    }
+
+    if (!selectedPair) {
+      for (const report of stats.values()) {
+        if (report.type !== "candidate-pair") continue;
+        const selected = "selected" in report ? report.selected === true : false;
+        const nominated = "nominated" in report ? report.nominated === true : false;
+        const state = "state" in report ? report.state : "";
+        if (selected || (nominated && state === "succeeded")) {
+          selectedPair = report;
+          break;
+        }
+      }
+    }
+
+    if (!selectedPair || selectedPair.type !== "candidate-pair") return null;
+
+    const localCandidate =
+      "localCandidateId" in selectedPair && typeof selectedPair.localCandidateId === "string"
+        ? stats.get(selectedPair.localCandidateId)
+        : null;
+    const remoteCandidate =
+      "remoteCandidateId" in selectedPair && typeof selectedPair.remoteCandidateId === "string"
+        ? stats.get(selectedPair.remoteCandidateId)
+        : null;
+
+    const toCandidate = (candidate: RTCStats | null): CandidateStats | null => {
+      if (!candidate || (candidate.type !== "local-candidate" && candidate.type !== "remote-candidate")) return null;
+      return {
+        candidateType: "candidateType" in candidate && typeof candidate.candidateType === "string" ? candidate.candidateType : undefined,
+        ip: "ip" in candidate && typeof candidate.ip === "string" ? candidate.ip : undefined,
+        port: "port" in candidate && typeof candidate.port === "number" ? candidate.port : undefined,
+        protocol: "protocol" in candidate && typeof candidate.protocol === "string" ? candidate.protocol : undefined,
+      };
+    };
+
+    const roundTripTimeMs =
+      "currentRoundTripTime" in selectedPair && typeof selectedPair.currentRoundTripTime === "number"
+        ? String(Math.round(selectedPair.currentRoundTripTime * 1000))
+        : undefined;
+    const availableOutgoingBitrate =
+      "availableOutgoingBitrate" in selectedPair &&
+      typeof selectedPair.availableOutgoingBitrate === "number"
+        ? String(Math.round(selectedPair.availableOutgoingBitrate))
+        : undefined;
+    const bytesSent =
+      "bytesSent" in selectedPair && typeof selectedPair.bytesSent === "number"
+        ? String(Math.round(selectedPair.bytesSent))
+        : undefined;
+    const bytesReceived =
+      "bytesReceived" in selectedPair && typeof selectedPair.bytesReceived === "number"
+        ? String(Math.round(selectedPair.bytesReceived))
+        : undefined;
+    const state = "state" in selectedPair && typeof selectedPair.state === "string" ? selectedPair.state : undefined;
+
+    return {
+      local: toCandidate(localCandidate),
+      remote: toCandidate(remoteCandidate),
+      state,
+      roundTripTimeMs,
+      availableOutgoingBitrate,
+      bytesSent,
+      bytesReceived,
+    };
+  };
 
   onMount(() => {
     const initMedia = async () => {
@@ -318,6 +414,78 @@ const RoomPage: Component = () => {
 
     const c = p.call(otherId, stream);
     bindCall(c);
+  });
+
+  // Telemetry: periodically report the selected ICE candidate pair so the
+  // dashboard can show the actual media path in use (host/srflx/relay).
+  createEffect(() => {
+    const active = media.active;
+    const myId = peerState.id;
+    if (!active || !myId) return;
+
+    const remotePeerId = active.peer || peerState.otherId;
+    if (!remotePeerId) return;
+
+    let dead = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let lastPayloadHash = "";
+
+    const sendTelemetry = async () => {
+      try {
+        const selected = await extractSelectedPairStats(active.peerConnection);
+        if (!selected) return;
+
+        const payload = {
+          peer_id: myId,
+          selected_pair: {
+            dst: remotePeerId,
+            local_candidate_type: selected.local?.candidateType,
+            local_candidate_ip: selected.local?.ip,
+            local_candidate_port: selected.local?.port !== undefined ? String(selected.local.port) : undefined,
+            local_candidate_protocol: selected.local?.protocol,
+            remote_candidate_type: selected.remote?.candidateType,
+            remote_candidate_ip: selected.remote?.ip,
+            remote_candidate_port: selected.remote?.port !== undefined ? String(selected.remote.port) : undefined,
+            remote_candidate_protocol: selected.remote?.protocol,
+            pair_state: selected.state,
+            round_trip_time_ms: selected.roundTripTimeMs,
+            available_outgoing_bitrate: selected.availableOutgoingBitrate,
+            bytes_sent: selected.bytesSent,
+            bytes_received: selected.bytesReceived,
+          },
+        };
+
+        const nextHash = JSON.stringify({
+          dst: payload.selected_pair.dst,
+          local_candidate_type: payload.selected_pair.local_candidate_type,
+          local_candidate_ip: payload.selected_pair.local_candidate_ip,
+          local_candidate_port: payload.selected_pair.local_candidate_port,
+          local_candidate_protocol: payload.selected_pair.local_candidate_protocol,
+          remote_candidate_type: payload.selected_pair.remote_candidate_type,
+          remote_candidate_ip: payload.selected_pair.remote_candidate_ip,
+          remote_candidate_port: payload.selected_pair.remote_candidate_port,
+          remote_candidate_protocol: payload.selected_pair.remote_candidate_protocol,
+          pair_state: payload.selected_pair.pair_state,
+        });
+        if (nextHash === lastPayloadHash) return;
+        lastPayloadHash = nextHash;
+
+        await postSelectedPairTelemetry(params.id, payload);
+      } catch {
+        // Ignore telemetry failures; calling should continue uninterrupted.
+      }
+    };
+
+    void sendTelemetry();
+    timer = setInterval(() => {
+      if (dead) return;
+      void sendTelemetry();
+    }, 5000);
+
+    onCleanup(() => {
+      dead = true;
+      clearInterval(timer);
+    });
   });
 
   const toggleMute = () => {

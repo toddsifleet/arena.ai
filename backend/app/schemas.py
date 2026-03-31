@@ -163,3 +163,25 @@ class PeerListItem(BaseModel):
 
 class ListPeersResponse(BaseModel):
     peers: list[PeerListItem]
+
+
+class TelemetrySelectedPairPayload(BaseModel):
+    dst: str
+    local_candidate_type: str | None = None
+    local_candidate_ip: str | None = None
+    local_candidate_port: str | None = None
+    local_candidate_protocol: str | None = None
+    remote_candidate_type: str | None = None
+    remote_candidate_ip: str | None = None
+    remote_candidate_port: str | None = None
+    remote_candidate_protocol: str | None = None
+    pair_state: str | None = None
+    round_trip_time_ms: str | None = None
+    available_outgoing_bitrate: str | None = None
+    bytes_sent: str | None = None
+    bytes_received: str | None = None
+
+
+class TelemetrySelectedPairRequest(BaseModel):
+    peer_id: str
+    selected_pair: TelemetrySelectedPairPayload

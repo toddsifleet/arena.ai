@@ -13,6 +13,10 @@ function isFlowEvent(type: string): boolean {
   return type === "signal.offer" || type === "signal.answer" || type === "signal.candidate";
 }
 
+function isTelemetryEvent(type: string): boolean {
+  return type === "telemetry.selected_pair";
+}
+
 type ParsedCandidate = {
   protocol: string;
   ip: string;
@@ -20,6 +24,22 @@ type ParsedCandidate = {
   type: string;
   relatedAddress?: string;
   relatedPort?: string;
+};
+
+type TelemetryRoute = {
+  localType: string;
+  localIp: string;
+  localPort: string;
+  localProtocol: string;
+  remoteType: string;
+  remoteIp: string;
+  remotePort: string;
+  remoteProtocol: string;
+  pairState: string;
+  roundTripTimeMs: string;
+  availableOutgoingBitrate: string;
+  bytesSent: string;
+  bytesReceived: string;
 };
 
 function parseIceCandidate(candidate: string | undefined): ParsedCandidate | null {
@@ -46,10 +66,46 @@ function parseIceCandidate(candidate: string | undefined): ParsedCandidate | nul
   return parsed;
 }
 
+function telemetryRouteFromEvent(event: EventItem | null): TelemetryRoute | null {
+  if (!event || event.type !== "telemetry.selected_pair") return null;
+  return {
+    localType: String(event.data.local_candidate_type ?? ""),
+    localIp: String(event.data.local_candidate_ip ?? ""),
+    localPort: String(event.data.local_candidate_port ?? ""),
+    localProtocol: String(event.data.local_candidate_protocol ?? ""),
+    remoteType: String(event.data.remote_candidate_type ?? ""),
+    remoteIp: String(event.data.remote_candidate_ip ?? ""),
+    remotePort: String(event.data.remote_candidate_port ?? ""),
+    remoteProtocol: String(event.data.remote_candidate_protocol ?? ""),
+    pairState: String(event.data.pair_state ?? ""),
+    roundTripTimeMs: String(event.data.round_trip_time_ms ?? ""),
+    availableOutgoingBitrate: String(event.data.available_outgoing_bitrate ?? ""),
+    bytesSent: String(event.data.bytes_sent ?? ""),
+    bytesReceived: String(event.data.bytes_received ?? ""),
+  };
+}
+
+function routeUsesTurn(route: TelemetryRoute | null): boolean {
+  if (!route) return false;
+  return route.localType.toLowerCase() === "relay" || route.remoteType.toLowerCase() === "relay";
+}
+
 const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
   const roomEvents = createMemo(() =>
-    props.events.filter(
-      (event) => event.data.room_id === props.selectedRoomId && isFlowEvent(event.type),
+    props.events.filter((event) => event.data.room_id === props.selectedRoomId),
+  );
+
+  const roomFlowEvents = createMemo(() => roomEvents().filter((event) => isFlowEvent(event.type)));
+  const roomTelemetryEvents = createMemo(() =>
+    roomEvents().filter((event) => isTelemetryEvent(event.type)),
+  );
+
+  const directedFlowEvents = createMemo(() =>
+    roomFlowEvents().filter((event) => typeof event.data.src === "string" && typeof event.data.dst === "string"),
+  );
+  const directedTelemetryEvents = createMemo(() =>
+    roomTelemetryEvents().filter(
+      (event) => typeof event.data.src === "string" && typeof event.data.dst === "string",
     ),
   );
 
@@ -57,7 +113,7 @@ const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
     const known = props.roomPeers.map((peer) => peer.peer_id);
     if (known.length >= 2) return known.slice(0, 2);
 
-    for (const event of roomEvents()) {
+    for (const event of [...directedTelemetryEvents(), ...directedFlowEvents()]) {
       const src = typeof event.data.src === "string" ? event.data.src : null;
       const dst = typeof event.data.dst === "string" ? event.data.dst : null;
       if (src && !known.includes(src)) known.push(src);
@@ -74,18 +130,33 @@ const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
     const left = leftPeerId();
     const right = rightPeerId();
     if (!left || !right) return [];
-    return roomEvents().filter((event) => event.data.src === left && event.data.dst === right);
+    return directedFlowEvents().filter((event) => event.data.src === left && event.data.dst === right);
   });
-
   const rightToLeftEvents = createMemo(() => {
     const left = leftPeerId();
     const right = rightPeerId();
     if (!left || !right) return [];
-    return roomEvents().filter((event) => event.data.src === right && event.data.dst === left);
+    return directedFlowEvents().filter((event) => event.data.src === right && event.data.dst === left);
+  });
+
+  const leftToRightTelemetryEvents = createMemo(() => {
+    const left = leftPeerId();
+    const right = rightPeerId();
+    if (!left || !right) return [];
+    return directedTelemetryEvents().filter((event) => event.data.src === left && event.data.dst === right);
+  });
+  const rightToLeftTelemetryEvents = createMemo(() => {
+    const left = leftPeerId();
+    const right = rightPeerId();
+    if (!left || !right) return [];
+    return directedTelemetryEvents().filter((event) => event.data.src === right && event.data.dst === left);
   });
 
   const lastLeftToRight = createMemo(() => leftToRightEvents()[0] ?? null);
   const lastRightToLeft = createMemo(() => rightToLeftEvents()[0] ?? null);
+  const lastLeftToRightTelemetry = createMemo(() => leftToRightTelemetryEvents()[0] ?? null);
+  const lastRightToLeftTelemetry = createMemo(() => rightToLeftTelemetryEvents()[0] ?? null);
+
   const leftToRightCandidates = createMemo(() =>
     leftToRightEvents()
       .filter((event) => event.type === "signal.candidate")
@@ -111,13 +182,19 @@ const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
 
   const latestLeftToRightCandidate = createMemo(() => leftToRightCandidates()[0] ?? null);
   const latestRightToLeftCandidate = createMemo(() => rightToLeftCandidates()[0] ?? null);
-  const leftToRightUsesTurn = createMemo(() =>
-    leftToRightCandidates().some((item) => item.parsed.type.toLowerCase() === "relay"),
-  );
-  const rightToLeftUsesTurn = createMemo(() =>
-    rightToLeftCandidates().some((item) => item.parsed.type.toLowerCase() === "relay"),
-  );
+  const leftTelemetryRoute = createMemo(() => telemetryRouteFromEvent(lastLeftToRightTelemetry()));
+  const rightTelemetryRoute = createMemo(() => telemetryRouteFromEvent(lastRightToLeftTelemetry()));
+
+  const leftToRightUsesTurn = createMemo(() => {
+    if (routeUsesTurn(leftTelemetryRoute())) return true;
+    return leftToRightCandidates().some((item) => item.parsed.type.toLowerCase() === "relay");
+  });
+  const rightToLeftUsesTurn = createMemo(() => {
+    if (routeUsesTurn(rightTelemetryRoute())) return true;
+    return rightToLeftCandidates().some((item) => item.parsed.type.toLowerCase() === "relay");
+  });
   const roomUsesTurn = createMemo(() => leftToRightUsesTurn() || rightToLeftUsesTurn());
+
   const selectedSide = createMemo(() => {
     const selected = props.selectedPeerId;
     if (!selected) return null;
@@ -190,20 +267,28 @@ const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
                   <div class="rounded-md border border-cyan-400/20 bg-cyan-400/5 px-2 py-1">
                     <div class="text-cyan-200/80">peer_1 -&gt; peer_2</div>
                     <div class="text-white/45">
-                      {lastLeftToRight() ? formatTime(lastLeftToRight()!.timestamp) : "no traffic"}
+                      {lastLeftToRightTelemetry()
+                        ? `${formatTime(lastLeftToRightTelemetry()!.timestamp)} actual`
+                        : lastLeftToRight()
+                          ? `${formatTime(lastLeftToRight()!.timestamp)} inferred`
+                          : "no traffic"}
                     </div>
                   </div>
                   <div class="rounded-md border border-violet-400/20 bg-violet-400/5 px-2 py-1">
                     <div class="text-violet-200/80">peer_2 -&gt; peer_1</div>
                     <div class="text-white/45">
-                      {lastRightToLeft() ? formatTime(lastRightToLeft()!.timestamp) : "no traffic"}
+                      {lastRightToLeftTelemetry()
+                        ? `${formatTime(lastRightToLeftTelemetry()!.timestamp)} actual`
+                        : lastRightToLeft()
+                          ? `${formatTime(lastRightToLeft()!.timestamp)} inferred`
+                          : "no traffic"}
                     </div>
                   </div>
                 </div>
                 <div class="mt-2 rounded-md border border-white/[0.08] bg-black/20 px-2 py-1 text-[10px] font-mono flex items-center justify-between">
                   <span class="text-white/40">TURN involved</span>
                   <span class={roomUsesTurn() ? "text-amber-300" : "text-emerald-300"}>
-                    {roomUsesTurn() ? "yes (relay seen)" : "no relay observed"}
+                    {roomUsesTurn() ? "yes (selected pair uses relay)" : "no relay observed"}
                   </span>
                 </div>
               </div>
@@ -223,31 +308,59 @@ const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
                 <div class="flex items-center justify-between mb-1">
                   <span class="text-cyan-200/90">peer_1 -&gt; peer_2 path</span>
                   <span class={leftToRightUsesTurn() ? "text-amber-300" : "text-emerald-300"}>
-                    {leftToRightUsesTurn() ? "TURN relay" : "direct candidate"}
+                    {leftToRightUsesTurn() ? "TURN relay" : "direct path"}
                   </span>
                 </div>
                 <Show
-                  when={latestLeftToRightCandidate()}
-                  fallback={<div class="text-white/45">No candidate details seen yet.</div>}
+                  when={leftTelemetryRoute()}
+                  fallback={
+                    <Show
+                      when={latestLeftToRightCandidate()}
+                      fallback={<div class="text-white/45">No telemetry/candidate details seen yet.</div>}
+                    >
+                      {(item) => (
+                        <div class="grid grid-cols-[72px_1fr] gap-y-1 gap-x-2">
+                          <span class="text-white/35">source</span>
+                          <span class="text-white/60">signal candidate</span>
+                          <span class="text-white/35">type</span>
+                          <span class="text-white/80">{item().parsed.type || "-"}</span>
+                          <span class="text-white/35">protocol</span>
+                          <span class="text-white/80">{item().parsed.protocol || "-"}</span>
+                          <span class="text-white/35">address</span>
+                          <span class="text-white/80 break-all">{item().parsed.ip}:{item().parsed.port}</span>
+                          <span class="text-white/35">related</span>
+                          <span class="text-white/70 break-all">
+                            {item().parsed.relatedAddress
+                              ? `${item().parsed.relatedAddress}:${item().parsed.relatedPort ?? "-"}`
+                              : "-"}
+                          </span>
+                          <span class="text-white/35">last event</span>
+                          <span class="text-white/55">{formatTime(item().event.timestamp)}</span>
+                        </div>
+                      )}
+                    </Show>
+                  }
                 >
-                  {(item) => (
+                  {(route) => (
                     <div class="grid grid-cols-[72px_1fr] gap-y-1 gap-x-2">
-                      <span class="text-white/35">type</span>
-                      <span class="text-white/80">{item().parsed.type || "-"}</span>
-                      <span class="text-white/35">protocol</span>
-                      <span class="text-white/80">{item().parsed.protocol || "-"}</span>
-                      <span class="text-white/35">address</span>
+                      <span class="text-white/35">source</span>
+                      <span class="text-emerald-300">selected pair telemetry</span>
+                      <span class="text-white/35">local</span>
                       <span class="text-white/80 break-all">
-                        {item().parsed.ip}:{item().parsed.port}
+                        {(route().localType || "-")} {(route().localProtocol || "-")} {(route().localIp || "-")}:{route().localPort || "-"}
                       </span>
-                      <span class="text-white/35">related</span>
-                      <span class="text-white/70 break-all">
-                        {item().parsed.relatedAddress
-                          ? `${item().parsed.relatedAddress}:${item().parsed.relatedPort ?? "-"}`
-                          : "-"}
+                      <span class="text-white/35">remote</span>
+                      <span class="text-white/80 break-all">
+                        {(route().remoteType || "-")} {(route().remoteProtocol || "-")} {(route().remoteIp || "-")}:{route().remotePort || "-"}
                       </span>
-                      <span class="text-white/35">last event</span>
-                      <span class="text-white/55">{formatTime(item().event.timestamp)}</span>
+                      <span class="text-white/35">state</span>
+                      <span class="text-white/70">{route().pairState || "-"}</span>
+                      <span class="text-white/35">rtt</span>
+                      <span class="text-white/70">{route().roundTripTimeMs ? `${route().roundTripTimeMs} ms` : "-"}</span>
+                      <span class="text-white/35">bytes</span>
+                      <span class="text-white/70">{route().bytesSent || "-"} sent / {route().bytesReceived || "-"} recv</span>
+                      <span class="text-white/35">bitrate</span>
+                      <span class="text-white/70">{route().availableOutgoingBitrate ? `${route().availableOutgoingBitrate} bps` : "-"}</span>
                     </div>
                   )}
                 </Show>
@@ -257,31 +370,59 @@ const MediaFlowPanel: Component<MediaFlowPanelProps> = (props) => {
                 <div class="flex items-center justify-between mb-1">
                   <span class="text-violet-200/90">peer_2 -&gt; peer_1 path</span>
                   <span class={rightToLeftUsesTurn() ? "text-amber-300" : "text-emerald-300"}>
-                    {rightToLeftUsesTurn() ? "TURN relay" : "direct candidate"}
+                    {rightToLeftUsesTurn() ? "TURN relay" : "direct path"}
                   </span>
                 </div>
                 <Show
-                  when={latestRightToLeftCandidate()}
-                  fallback={<div class="text-white/45">No candidate details seen yet.</div>}
+                  when={rightTelemetryRoute()}
+                  fallback={
+                    <Show
+                      when={latestRightToLeftCandidate()}
+                      fallback={<div class="text-white/45">No telemetry/candidate details seen yet.</div>}
+                    >
+                      {(item) => (
+                        <div class="grid grid-cols-[72px_1fr] gap-y-1 gap-x-2">
+                          <span class="text-white/35">source</span>
+                          <span class="text-white/60">signal candidate</span>
+                          <span class="text-white/35">type</span>
+                          <span class="text-white/80">{item().parsed.type || "-"}</span>
+                          <span class="text-white/35">protocol</span>
+                          <span class="text-white/80">{item().parsed.protocol || "-"}</span>
+                          <span class="text-white/35">address</span>
+                          <span class="text-white/80 break-all">{item().parsed.ip}:{item().parsed.port}</span>
+                          <span class="text-white/35">related</span>
+                          <span class="text-white/70 break-all">
+                            {item().parsed.relatedAddress
+                              ? `${item().parsed.relatedAddress}:${item().parsed.relatedPort ?? "-"}`
+                              : "-"}
+                          </span>
+                          <span class="text-white/35">last event</span>
+                          <span class="text-white/55">{formatTime(item().event.timestamp)}</span>
+                        </div>
+                      )}
+                    </Show>
+                  }
                 >
-                  {(item) => (
+                  {(route) => (
                     <div class="grid grid-cols-[72px_1fr] gap-y-1 gap-x-2">
-                      <span class="text-white/35">type</span>
-                      <span class="text-white/80">{item().parsed.type || "-"}</span>
-                      <span class="text-white/35">protocol</span>
-                      <span class="text-white/80">{item().parsed.protocol || "-"}</span>
-                      <span class="text-white/35">address</span>
+                      <span class="text-white/35">source</span>
+                      <span class="text-emerald-300">selected pair telemetry</span>
+                      <span class="text-white/35">local</span>
                       <span class="text-white/80 break-all">
-                        {item().parsed.ip}:{item().parsed.port}
+                        {(route().localType || "-")} {(route().localProtocol || "-")} {(route().localIp || "-")}:{route().localPort || "-"}
                       </span>
-                      <span class="text-white/35">related</span>
-                      <span class="text-white/70 break-all">
-                        {item().parsed.relatedAddress
-                          ? `${item().parsed.relatedAddress}:${item().parsed.relatedPort ?? "-"}`
-                          : "-"}
+                      <span class="text-white/35">remote</span>
+                      <span class="text-white/80 break-all">
+                        {(route().remoteType || "-")} {(route().remoteProtocol || "-")} {(route().remoteIp || "-")}:{route().remotePort || "-"}
                       </span>
-                      <span class="text-white/35">last event</span>
-                      <span class="text-white/55">{formatTime(item().event.timestamp)}</span>
+                      <span class="text-white/35">state</span>
+                      <span class="text-white/70">{route().pairState || "-"}</span>
+                      <span class="text-white/35">rtt</span>
+                      <span class="text-white/70">{route().roundTripTimeMs ? `${route().roundTripTimeMs} ms` : "-"}</span>
+                      <span class="text-white/35">bytes</span>
+                      <span class="text-white/70">{route().bytesSent || "-"} sent / {route().bytesReceived || "-"} recv</span>
+                      <span class="text-white/35">bitrate</span>
+                      <span class="text-white/70">{route().availableOutgoingBitrate ? `${route().availableOutgoingBitrate} bps` : "-"}</span>
                     </div>
                   )}
                 </Show>
